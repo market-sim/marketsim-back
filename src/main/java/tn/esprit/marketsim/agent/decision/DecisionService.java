@@ -47,6 +47,12 @@ public class DecisionService {
 
     @Transactional
     public List<DecisionDto> decide(AgentConfig agent, User user) {
+        return decide(agent, user, 1);
+    }
+
+    /** @param rounds nombre d'analyses successives (1 a 10), chacune sur un nouvel etat du marche */
+    @Transactional
+    public List<DecisionDto> decide(AgentConfig agent, User user, int rounds) {
         List<String> symbols = Arrays.stream(String.valueOf(agent.getAllowedAssets()).split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty() && !s.equals("null"))
@@ -57,9 +63,11 @@ public class DecisionService {
         TradingPolicy policy = support.policy(agent);
 
         List<DecisionDto> result = new ArrayList<>();
-        for (String symbol : symbols) {
-            Asset asset = support.asset(symbol);
-            result.add(toDto(decideOne(agent, user, asset, policy)));
+        for (int r = 0; r < Math.max(1, Math.min(10, rounds)); r++) {
+            for (String symbol : symbols) {
+                Asset asset = support.asset(symbol);
+                result.add(0, toDto(decideOne(agent, user, asset, policy)));
+            }
         }
         return result;
     }
@@ -112,11 +120,11 @@ public class DecisionService {
 
     /**
      * Historique recent simule (le module 5 ne fournit qu'un prix courant) : trajectoire GBM
-     * de 120 jours qui se termine exactement au prix actuel. La graine change chaque minute.
+     * de 120 jours qui se termine exactement au prix actuel. Chaque analyse tire un nouvel etat du marche.
      * TODO : remplacer par l'historique reel des cotations quand le module 5 le stockera.
      */
     private double[] recentHistory(Asset asset, AssetDynamics dynamics, double price) {
-        long seed = asset.getSymbol().hashCode() * 1_000_003L + System.currentTimeMillis() / 60_000;
+        long seed = asset.getSymbol().hashCode() * 1_000_003L ^ java.util.concurrent.ThreadLocalRandom.current().nextLong();
         double[] path = PathGenerator.generate(1.0, HISTORY_DAYS, dynamics, PriceModel.GBM, new SplittableRandom(seed));
         double scale = price / path[HISTORY_DAYS];
         for (int i = 0; i < path.length; i++) path[i] *= scale;

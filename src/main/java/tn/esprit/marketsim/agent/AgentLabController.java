@@ -9,10 +9,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.AnomalyReport;
+import tn.esprit.marketsim.agent.anomaly.AnomalyService;
 import tn.esprit.marketsim.agent.decision.DecisionService;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.DecisionDto;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.MonteCarloRequest;
@@ -45,12 +48,26 @@ public class AgentLabController {
     private final QLearningTrainer trainer;
     private final TournamentService tournamentService;
     private final ReplayService replayService;
+    private final AnomalyService anomalyService;
 
     // ----- Decisions & XAI -----
 
     @PostMapping("/{id}/decide")
-    public List<DecisionDto> decide(@PathVariable Long id, @AuthenticationPrincipal User user) {
-        return decisionService.decide(agentService.findOne(id, user), user);
+    public List<DecisionDto> decide(@PathVariable Long id, @RequestParam(defaultValue = "1") int rounds,
+                                    @AuthenticationPrincipal User user) {
+        return decisionService.decide(agentService.findOne(id, user), user, rounds);
+    }
+
+    // ----- Surveillance comportementale (detection d'anomalies) -----
+
+    @GetMapping("/{id}/anomalies")
+    public AnomalyReport anomalies(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return anomalyService.report(agentService.findOne(id, user));
+    }
+
+    @GetMapping("/anomalies")
+    public List<AnomalyReport> allAnomalies(@AuthenticationPrincipal User user) {
+        return anomalyService.reportsFor(user.getId());
     }
 
     @GetMapping("/{id}/decisions")

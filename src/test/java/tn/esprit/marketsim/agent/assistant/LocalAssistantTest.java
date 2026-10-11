@@ -44,7 +44,19 @@ class LocalAssistantTest {
             List.of(new DecisionInfo(LocalDateTime.now(), "yasmine", AgentAction.BUY, "AAPL", 0.37, null,
                     "Achat AAPL (confiance 37 %) — principaux facteurs : Position actuelle +0,10.")),
             new TournamentInfo(LocalDateTime.now(), "AAPL", 2000, "yasmine > Buy & Hold", "yasmine",
-                    "yasmine obtient le meilleur Sharpe moyen (0,45)."));
+                    "yasmine obtient le meilleur Sharpe moyen (0,45)."),
+            List.of(new AssistantContextBuilder.AlertInfo("yasmine", tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.Status.ALERT,
+                    "Alerte : yasmine se comporte de façon inhabituelle par rapport à son historique (chute de confiance).",
+                    List.of("La confiance moyenne est passée de 72 % à 41 % sur les 8 dernières décisions."))));
+
+    @Test
+    void reportsBehaviouralAlerts() {
+        String text = assistant.answer("Est-ce que mon agent a un comportement bizarre ?", snapshot).text();
+        assertTrue(text.contains("inhabituelle"));
+        assertTrue(text.contains("72 %"));
+        assertTrue(assistant.answer("briefing", snapshot).text().startsWith("Bonjour") || assistant.answer("briefing", snapshot).text().startsWith("Bonsoir"));
+        assertTrue(assistant.answer("briefing", snapshot).text().contains("Attention, Alerte"));
+    }
 
     @Test
     void explainsConceptWithUsersOwnNumbers() {

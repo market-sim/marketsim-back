@@ -120,6 +120,35 @@ Pendant la partie, on voit en direct :
 
 À la fin, le jeu rappelle qu'une seule partie peut être due à la chance, et renvoie vers le tournoi statistique.
 
+## 6 quater. Surveillance comportementale (détection d'anomalies)
+
+Le module vérifie en continu que chaque agent se comporte **comme d'habitude**. Il compare ses **8 dernières décisions** à une référence :
+- l'**historique** de l'agent, dès qu'il compte au moins 15 décisions ;
+- sinon un **profil simulé** de 60 décisions, produites par la politique actuelle sur des marchés générés exactement comme les vrais.
+
+| Test | Méthode | Pourquoi |
+|---|---|---|
+| Chute de confiance / excès de confiance | z-score **stratifié par type d'action** | la confiance d'un HOLD (~85 %) et d'un BUY (~65 %) ne se comparent pas |
+| Répartition BUY / SELL / HOLD | test **exact** sous la loi prédictive **Dirichlet-multinomiale** | avec 8 décisions le khi² n'est pas valide, et les proportions de référence sont elles-mêmes estimées |
+| Taille des positions | z-score sur le log du montant engagé | détecte une prise de risque soudaine |
+| Décision isolée | écart à plus de 3 écarts-types | signal faible |
+| Approbation humaine | test de deux proportions (unilatéral) | les utilisateurs désapprouvent les décisions récentes |
+
+**Comparaisons multiples** : 5 tests tournent en parallèle, donc les seuils d'alerte sont corrigés (Bonferroni, α = 2,5 % / 5).
+Taux de fausses alertes **mesuré à 1,5 %** sur 5 000 comportements normaux simulés (test unitaire).
+
+Les statuts possibles :
+- **NORMAL** ;
+- **WATCH** (signal faible) ;
+- **ALERT** (au moins une anomalie moyenne ou forte) ;
+- **INSUFFICIENT_DATA**.
+
+Démo : un agent tourne normalement → NORMAL. On le passe en « Agressif » (risque 95, capital ×2) → **ALERT 90/100**, « positions anormalement grosses, de 4 391 $ à 14 701 $ ». Atlas en parle dans le briefing.
+
+**Ouverture vers le Module 1** : le module expose l'interface `AgentBehaviorMonitor.reportsFor(userId)`. Le Module 1 (supervision / détection d'anomalies) peut l'injecter sans dépendre du code interne du module 6.
+
+API : `GET /api/agents/{id}/anomalies`, `GET /api/agents/anomalies`.
+
 ## 7. Tournoi d'agents et tests statistiques
 
 « L'agent A est meilleur que B » ne veut rien dire si l'écart vient du hasard. Le tournoi le **prouve** statistiquement :

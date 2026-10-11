@@ -52,6 +52,9 @@ public class LocalAssistant {
         if (has(q, "briefing", "bilan", "point complet", "resume complet", "chamal", "kol chay", "kolchay", "tout savoir")) {
             return briefing(s);
         }
+        if (has(q, "anomal", "alerte", "inhabituel", "bizarre", "etrange", "ghrib", "surveill", "comportement")) {
+            return new Answer(alerts(s, true), List.of(), false);
+        }
         if (has(q, "pourquoi", "3lech", "alech", "3leh", "aleh", "raison")) {
             return new Answer(lastDecisionWhy(s), List.of(), false);
         }
@@ -90,6 +93,9 @@ public class LocalAssistant {
         StringBuilder sb = new StringBuilder(greeting(s)).append(" Voici votre briefing du ")
                 .append(LocalDate.now().format(DAY)).append(".\n\n");
 
+        if (!s.alerts().isEmpty()) {
+            sb.append("Attention, ").append(alerts(s, false)).append("\n\n");
+        }
         sb.append("Côté agents. ").append(agentsSummary(s, false)).append("\n\n");
 
         List<NewsItem> markets = news.search(NewsService.MARKETS, 4);
@@ -177,6 +183,25 @@ public class LocalAssistant {
         if (rated > 0) {
             long approved = s.decisions().stream().filter(d -> d.rating() != null && d.rating() >= 4).count();
             sb.append(" Vous avez approuvé ").append(approved).append(" des ").append(rated).append(" décisions notées récemment.");
+        }
+        return sb.toString().trim();
+    }
+
+    /** Alertes de la surveillance comportementale, en langage naturel. */
+    String alerts(Snapshot s, boolean detailed) {
+        if (s.alerts().isEmpty()) {
+            return s.agents().isEmpty() ? "Vous n'avez pas encore d'agent à surveiller."
+                    : "Bonne nouvelle : aucun de vos agents ne se comporte de façon inhabituelle. Je compare en permanence leurs dernières "
+                    + "décisions à leur comportement habituel : confiance, répartition des achats et ventes, taille des positions et votre approbation.";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (AssistantContextBuilder.AlertInfo a : s.alerts()) {
+            sb.append(a.summary()).append(' ');
+            a.details().stream().limit(detailed ? 3 : 1).forEach(d -> sb.append(d).append(' '));
+        }
+        if (detailed) {
+            sb.append("Ce n'est pas forcément une erreur : un changement de stratégie, un nouvel entraînement ou un marché agité "
+                    + "peuvent l'expliquer. Vérifiez ses dernières décisions dans l'onglet Décisions.");
         }
         return sb.toString().trim();
     }

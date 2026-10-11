@@ -13,6 +13,9 @@ import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.agent.AgentAction;
 import tn.esprit.marketsim.agent.AgentConfigRepository;
 import tn.esprit.marketsim.agent.AgentStrategy;
+import tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.AnomalyReport;
+import tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.Status;
+import tn.esprit.marketsim.agent.anomaly.AnomalyService;
 import tn.esprit.marketsim.agent.decision.AgentDecisionRepository;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRun;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRunRepository;
@@ -36,6 +39,7 @@ public class AssistantContextBuilder {
     private final AgentDecisionRepository decisionRepository;
     private final MonteCarloRunRepository monteCarloRepository;
     private final TournamentRunRepository tournamentRepository;
+    private final AnomalyService anomalyService;
 
     public record McInfo(LocalDateTime at, String symbol, int paths, Double crashPct, double meanReturn,
                          double benchmarkReturn, double var95, double cvar95, double sharpe, double meanDrawdown,
@@ -54,8 +58,12 @@ public class AssistantContextBuilder {
                                  String conclusion) {
     }
 
+    /** Alerte comportementale d'un agent (surveillance du module 6). */
+    public record AlertInfo(String agent, Status status, String summary, List<String> details) {
+    }
+
     public record Snapshot(String userName, String level, List<AgentInfo> agents, List<DecisionInfo> decisions,
-                           TournamentInfo tournament) {
+                           TournamentInfo tournament, List<AlertInfo> alerts) {
     }
 
     @Transactional(readOnly = true)
@@ -76,7 +84,12 @@ public class AssistantContextBuilder {
         List<TournamentRun> tournaments = tournamentRepository.findTop20ByOwnerIdOrderByCreatedAtDescIdDesc(user.getId());
         TournamentInfo tournament = tournaments.isEmpty() ? null : toTournament(tournaments.get(0));
 
-        return new Snapshot(user.getFirstName(), String.valueOf(user.getLevel()), agents, decisions, tournament);
+        List<AlertInfo> alerts = anomalyService.reportsFor(user.getId()).stream()
+                .filter(r -> r.status() == Status.ALERT || r.status() == Status.WATCH)
+                .map(AssistantContextBuilder::toAlert)
+                .toList();
+
+        return new Snapshot(user.getFirstName(), String.valueOf(user.getLevel()), agents, decisions, tournament, alerts);
     }
 
     /** Version texte, jointe a la question pour l'assistant en ligne (Claude). */
@@ -115,12 +128,24 @@ public class AssistantContextBuilder {
                     d.explanation()));
         }
 
+        sb.append("\nSurveillance comportementale des agents :\n");
+        if (s.alerts().isEmpty()) sb.append("- aucun comportement inhabituel détecté\n");
+        for (AlertInfo a : s.alerts()) {
+            sb.append("- ").append(a.summary()).append('\n');
+            a.details().forEach(d -> sb.append("    ").append(d).append('\n'));
+        }
+
         TournamentInfo t = s.tournament();
         if (t != null) {
             sb.append(String.format(Locale.FRANCE, "%nDernier tournoi (%s, %s, %d marchés) : classement %s. %s%n",
                     t.at().format(STAMP), t.symbol(), t.paths(), t.ranking(), t.conclusion()));
         }
         return sb.toString();
+    }
+
+    private static AlertInfo toAlert(AnomalyReport r) {
+        return new AlertInfo(r.agentName(), r.status(), r.summary(),
+                r.anomalies().stream().map(a -> a.message()).limit(3).toList());
     }
 
     private static McInfo toMc(MonteCarloRun r) {

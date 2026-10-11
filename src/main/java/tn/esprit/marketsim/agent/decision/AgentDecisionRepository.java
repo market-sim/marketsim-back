@@ -9,6 +9,9 @@ public interface AgentDecisionRepository extends JpaRepository<AgentDecision, Lo
 
     List<AgentDecision> findTop50ByAgentIdOrderByCreatedAtDescIdDesc(Long agentId);
 
+    /** Historique pour la detection d'anomalies comportementales. */
+    List<AgentDecision> findTop200ByAgentIdOrderByCreatedAtDescIdDesc(Long agentId);
+
     Optional<AgentDecision> findByIdAndAgentOwnerId(Long id, Long ownerId);
 
     /** Dernieres decisions de tous les agents d'un utilisateur (contexte de l'assistant). */

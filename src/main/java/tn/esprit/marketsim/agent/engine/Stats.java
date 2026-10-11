@@ -145,8 +145,13 @@ public final class Stats {
         return h;
     }
 
+    /** ln(n!) */
+    public static double logFactorial(int n) {
+        return n < 2 ? 0 : logGamma(n + 1.0);
+    }
+
     /** ln Gamma(x) par l'approximation de Lanczos (precision ~1e-15). */
-    static double logGamma(double x) {
+    public static double logGamma(double x) {
         double[] g = {57.1562356658629235, -59.5979603554754912, 14.1360979747417471, -0.491913816097620199,
                 0.339946499848118887e-4, 0.465236289270485756e-4, -0.983744753048795646e-4,
                 0.158088703224912494e-3, -0.210264441724104883e-3, 0.217439618115212643e-3,
