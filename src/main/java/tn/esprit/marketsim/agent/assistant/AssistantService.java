@@ -92,12 +92,15 @@ public class AssistantService {
     }
 
     private final AssistantContextBuilder contextBuilder;
+    private final LocalAssistant localAssistant;
     private final String model;
     private volatile AnthropicClient client;
     private volatile String offlineReason;
 
-    public AssistantService(AssistantContextBuilder contextBuilder, @Value("${app.ai.model}") String model) {
+    public AssistantService(AssistantContextBuilder contextBuilder, LocalAssistant localAssistant,
+                            @Value("${app.ai.model}") String model) {
         this.contextBuilder = contextBuilder;
+        this.localAssistant = localAssistant;
         this.model = model;
     }
 
@@ -110,12 +113,11 @@ public class AssistantService {
         if (history.isEmpty()) {
             throw new IllegalArgumentException("La conversation doit se terminer par un message de l'utilisateur");
         }
-        String context = contextBuilder.build(user);
-
         AnthropicClient c = client();
         if (c == null) {
-            return offline(context, offlineReason);
+            return local(user, history, offlineReason);
         }
+        String context = contextBuilder.build(user);
 
         boolean wantWeb = req.webSearch() == null || req.webSearch();
         // Tentatives successives : fonctionnalites optionnelles retirees si le compte ne les autorise pas
@@ -134,7 +136,7 @@ public class AssistantService {
                 last = e;
             } catch (UnauthorizedException e) {
                 offlineReason = "Clé ANTHROPIC_API_KEY invalide";
-                return offline(context, offlineReason);
+                return local(user, history, offlineReason);
             } catch (RateLimitException e) {
                 throw new IllegalArgumentException("L'assistant est très sollicité, réessayez dans quelques secondes.");
             } catch (AnthropicServiceException e) {
@@ -244,12 +246,13 @@ public class AssistantService {
         return client;
     }
 
-    /** Sans cle API : resume construit localement a partir des donnees de l'application. */
-    private ChatResponse offline(String context, String reason) {
-        String reply = "Je fonctionne en mode hors-ligne : je ne peux pas encore discuter librement ni consulter "
-                + "l'actualité des marchés. Voici tout de même le point sur vos agents.\n\n" + context
-                + "\nPour activer la conversation et les actualités, définissez la variable d'environnement "
-                + "ANTHROPIC_API_KEY puis redémarrez le backend.";
-        return new ChatResponse(reply, List.of(), false, false, model, reason);
+    /**
+     * Sans cle API : l'assistant local repond aux demandes courantes (briefing, actualites Google News,
+     * tendances, decisions des agents, notions de finance) a partir des donnees de l'application.
+     */
+    private ChatResponse local(User user, List<ChatMessage> history, String reason) {
+        String question = history.get(history.size() - 1).content();
+        LocalAssistant.Answer answer = localAssistant.answer(question, contextBuilder.snapshot(user));
+        return new ChatResponse(answer.text(), answer.sources(), false, answer.newsUsed(), "local", reason);
     }
 }
