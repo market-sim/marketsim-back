@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.agent.assistant.AssistantService.ChatRequest;
 import tn.esprit.marketsim.agent.assistant.AssistantService.ChatResponse;
 import tn.esprit.marketsim.agent.assistant.AssistantService.Status;
+import tn.esprit.marketsim.agent.assistant.ChartAnalysisService.ChartRequest;
+import tn.esprit.marketsim.agent.assistant.ChartAnalysisService.ChartResponse;
 import tn.esprit.marketsim.user.User;
 
 /** Module 6 : assistant IA conversationnel (briefings, explications, actualites des marches). */
@@ -21,6 +23,7 @@ import tn.esprit.marketsim.user.User;
 public class AssistantController {
 
     private final AssistantService assistantService;
+    private final ChartAnalysisService chartAnalysisService;
 
     @GetMapping("/status")
     public Status status() {
@@ -30,5 +33,11 @@ public class AssistantController {
     @PostMapping("/chat")
     public ChatResponse chat(@Valid @RequestBody ChatRequest req, @AuthenticationPrincipal User user) {
         return assistantService.chat(user, req);
+    }
+
+    /** Analyse d'une capture d'ecran de graphique (Claude vision). */
+    @PostMapping("/chart")
+    public ChartResponse chart(@Valid @RequestBody ChartRequest req, @AuthenticationPrincipal User user) {
+        return chartAnalysisService.analyze(user, req);
     }
 }

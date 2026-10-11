@@ -52,6 +52,9 @@ public class LocalAssistant {
         if (has(q, "briefing", "bilan", "point complet", "resume complet", "chamal", "kol chay", "kolchay", "tout savoir")) {
             return briefing(s);
         }
+        if (has(q, "pilote", "autopilot", "automatique", "wa7dou", "wahdou", "absence", "pendant que", "fi blasti")) {
+            return new Answer(autopilot(s), List.of(), false);
+        }
         if (has(q, "anomal", "alerte", "inhabituel", "bizarre", "etrange", "ghrib", "surveill", "comportement")) {
             return new Answer(alerts(s, true), List.of(), false);
         }
@@ -97,6 +100,9 @@ public class LocalAssistant {
             sb.append("Attention, ").append(alerts(s, false)).append("\n\n");
         }
         sb.append("Côté agents. ").append(agentsSummary(s, false)).append("\n\n");
+        if (!s.autopilot().isEmpty()) {
+            sb.append("En pilote automatique. ").append(String.join(" ", s.autopilot())).append("\n\n");
+        }
 
         List<NewsItem> markets = news.search(NewsService.MARKETS, 4);
         if (markets.isEmpty()) {
@@ -185,6 +191,15 @@ public class LocalAssistant {
             sb.append(" Vous avez approuvé ").append(approved).append(" des ").append(rated).append(" décisions notées récemment.");
         }
         return sb.toString().trim();
+    }
+
+    /** Ce qu'ont fait les agents en pilote automatique. */
+    String autopilot(Snapshot s) {
+        if (s.autopilot().isEmpty()) {
+            return "Aucun de vos agents n'est en pilote automatique. Ouvrez l'onglet Pilote automatique d'un agent pour le laisser "
+                    + "trader seul, avec une perte maximale, une limite d'ordres et un coupe-circuit en cas de comportement inhabituel.";
+        }
+        return String.join(" ", s.autopilot());
     }
 
     /** Alertes de la surveillance comportementale, en langage naturel. */

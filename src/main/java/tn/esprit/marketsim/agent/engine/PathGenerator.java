@@ -88,6 +88,38 @@ public final class PathGenerator {
         return p;
     }
 
+    /** Etat d'un marche simule en continu : prix du jour et regime courant. */
+    public record Step(double price, boolean bear) {
+    }
+
+    /**
+     * Fait avancer un marche simule d'un jour (pilote automatique) : meme dynamique que {@link #build},
+     * en conservant le regime haussier / baissier d'un jour a l'autre.
+     */
+    public static Step nextStep(double price, boolean bear, AssetDynamics d, PriceModel model, RandomGenerator rng) {
+        boolean inBear = bear;
+        double mu = d.mu();
+        double sigma = d.sigma();
+        double jump = 0;
+        if (model == PriceModel.REGIME_SWITCHING) {
+            if (rng.nextDouble() > (inBear ? STAY_BEAR : STAY_BULL)) inBear = !inBear;
+            mu += inBear ? BEAR_DRIFT : BULL_DRIFT;
+            sigma *= inBear ? BEAR_VOL : BULL_VOL;
+        } else if (model == PriceModel.JUMP_DIFFUSION) {
+            double k = Math.exp(d.jumpMean() + 0.5 * d.jumpStd() * d.jumpStd()) - 1;
+            mu -= d.jumpIntensity() * k;
+            int n = poisson(d.jumpIntensity() * DT, rng);
+            for (int i = 0; i < n; i++) jump += d.jumpMean() + d.jumpStd() * rng.nextGaussian();
+        }
+        double logReturn = (mu - 0.5 * sigma * sigma) * DT + sigma * Math.sqrt(DT) * rng.nextGaussian() + jump;
+        return new Step(price * Math.exp(logReturn), inBear);
+    }
+
+    /** Regime final d'une trajectoire (pour continuer la simulation la ou elle s'est arretee). */
+    public static boolean lastRegimeIsBear(Shocks shocks) {
+        return shocks.bear().length > 0 && shocks.bear()[shocks.bear().length - 1];
+    }
+
     public static double[] generate(double s0, int steps, AssetDynamics d, PriceModel model, RandomGenerator rng) {
         return build(s0, drawShocks(steps, d, model, rng), d, model, false);
     }

@@ -16,6 +16,7 @@ import tn.esprit.marketsim.agent.AgentStrategy;
 import tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.AnomalyReport;
 import tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.Status;
 import tn.esprit.marketsim.agent.anomaly.AnomalyService;
+import tn.esprit.marketsim.agent.autopilot.AutopilotService;
 import tn.esprit.marketsim.agent.decision.AgentDecisionRepository;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRun;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRunRepository;
@@ -40,6 +41,7 @@ public class AssistantContextBuilder {
     private final MonteCarloRunRepository monteCarloRepository;
     private final TournamentRunRepository tournamentRepository;
     private final AnomalyService anomalyService;
+    private final AutopilotService autopilotService;
 
     public record McInfo(LocalDateTime at, String symbol, int paths, Double crashPct, double meanReturn,
                          double benchmarkReturn, double var95, double cvar95, double sharpe, double meanDrawdown,
@@ -63,7 +65,7 @@ public class AssistantContextBuilder {
     }
 
     public record Snapshot(String userName, String level, List<AgentInfo> agents, List<DecisionInfo> decisions,
-                           TournamentInfo tournament, List<AlertInfo> alerts) {
+                           TournamentInfo tournament, List<AlertInfo> alerts, List<String> autopilot) {
     }
 
     @Transactional(readOnly = true)
@@ -89,7 +91,8 @@ public class AssistantContextBuilder {
                 .map(AssistantContextBuilder::toAlert)
                 .toList();
 
-        return new Snapshot(user.getFirstName(), String.valueOf(user.getLevel()), agents, decisions, tournament, alerts);
+        return new Snapshot(user.getFirstName(), String.valueOf(user.getLevel()), agents, decisions, tournament, alerts,
+                autopilotService.summaries(user.getId()));
     }
 
     /** Version texte, jointe a la question pour l'assistant en ligne (Claude). */
@@ -127,6 +130,10 @@ public class AssistantContextBuilder {
                     d.rating() == null ? "" : d.rating() >= 4 ? ", approuvée par l'utilisateur" : ", jugée mauvaise par l'utilisateur",
                     d.explanation()));
         }
+
+        sb.append("\nPilote automatique :\n");
+        if (s.autopilot().isEmpty()) sb.append("- aucun agent en pilote automatique\n");
+        s.autopilot().forEach(line -> sb.append("- ").append(line).append('\n'));
 
         sb.append("\nSurveillance comportementale des agents :\n");
         if (s.alerts().isEmpty()) sb.append("- aucun comportement inhabituel détecté\n");

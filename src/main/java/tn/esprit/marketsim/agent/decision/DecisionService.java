@@ -80,10 +80,30 @@ public class DecisionService {
 
         int position = hasOpenPosition(user, asset.getSymbol()) ? 1 : 0;
         PolicyDecision d = policy.decide(features, position);
+        AgentDecision decision = build(agent, asset.getSymbol(), price, d, features, dynamics);
 
+        if (agent.isActive() && d.action() != AgentAction.HOLD) {
+            decision.setOrderId(execute(decision, user).getId());
+        }
+        return repository.save(decision);
+    }
+
+    /**
+     * Enregistre une decision prise par le pilote automatique (marche simule en continu) : meme
+     * explication XAI, meme dimensionnement, et elle alimente la surveillance comportementale.
+     */
+    @Transactional
+    public AgentDecision recordAutopilotDecision(AgentConfig agent, String symbol, double price, PolicyDecision d,
+                                                 MarketFeatures features, AssetDynamics dynamics) {
+        return repository.save(build(agent, symbol, price, d, features, dynamics));
+    }
+
+    /** Construit la decision (explication, taille, stop-loss / take-profit) sans l'enregistrer. */
+    private AgentDecision build(AgentConfig agent, String symbol, double price, PolicyDecision d,
+                                MarketFeatures features, AssetDynamics dynamics) {
         AgentDecision decision = new AgentDecision();
         decision.setAgent(agent);
-        decision.setSymbol(asset.getSymbol());
+        decision.setSymbol(symbol);
         decision.setAction(d.action());
         decision.setPrice(price);
         decision.setConfidence(d.confidence());
@@ -110,12 +130,8 @@ public class DecisionService {
             decision.setStopLoss(round(price * (buy ? 1 - stop : 1 + stop), 4));
             decision.setTakeProfit(round(price * (buy ? 1 + 2 * stop : 1 - 2 * stop), 4));
         }
-        decision.setExplanation(explain(asset.getSymbol(), d));
-
-        if (agent.isActive() && d.action() != AgentAction.HOLD) {
-            decision.setOrderId(execute(decision, user).getId());
-        }
-        return repository.save(decision);
+        decision.setExplanation(explain(symbol, d));
+        return decision;
     }
 
     /**

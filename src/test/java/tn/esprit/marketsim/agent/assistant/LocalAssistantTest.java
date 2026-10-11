@@ -47,7 +47,14 @@ class LocalAssistantTest {
                     "yasmine obtient le meilleur Sharpe moyen (0,45)."),
             List.of(new AssistantContextBuilder.AlertInfo("yasmine", tn.esprit.marketsim.agent.anomaly.AgentBehaviorMonitor.Status.ALERT,
                     "Alerte : yasmine se comporte de façon inhabituelle par rapport à son historique (chute de confiance).",
-                    List.of("La confiance moyenne est passée de 72 % à 41 % sur les 8 dernières décisions."))));
+                    List.of("La confiance moyenne est passée de 72 % à 41 % sur les 8 dernières décisions."))),
+            List.of("Pilote automatique de yasmine : en marche, 42 jours simulés, portefeuille +3,1 % contre +1,2 % pour le buy and hold, 5 ordres clôturés."));
+
+    @Test
+    void reportsAutopilotActivity() {
+        assertTrue(assistant.answer("chnowa 3mel el agent wa7dou ?", snapshot).text().contains("42 jours simulés"));
+        assertTrue(assistant.answer("briefing", snapshot).text().contains("En pilote automatique"));
+    }
 
     @Test
     void reportsBehaviouralAlerts() {

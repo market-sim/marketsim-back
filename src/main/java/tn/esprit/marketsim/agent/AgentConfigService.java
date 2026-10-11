@@ -6,6 +6,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.agent.autopilot.AutopilotAssetRepository;
+import tn.esprit.marketsim.agent.autopilot.AutopilotEventRepository;
+import tn.esprit.marketsim.agent.autopilot.AutopilotSessionRepository;
 import tn.esprit.marketsim.agent.decision.AgentDecisionRepository;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRunRepository;
 import tn.esprit.marketsim.common.NotFoundException;
@@ -18,6 +21,9 @@ public class AgentConfigService {
     private final AgentConfigRepository repository;
     private final AgentDecisionRepository decisionRepository;
     private final MonteCarloRunRepository monteCarloRunRepository;
+    private final AutopilotSessionRepository autopilotSessionRepository;
+    private final AutopilotAssetRepository autopilotAssetRepository;
+    private final AutopilotEventRepository autopilotEventRepository;
 
     public List<AgentConfig> findMine(User user) {
         return repository.findByOwnerId(user.getId());
@@ -60,6 +66,11 @@ public class AgentConfigService {
     @Transactional
     public void delete(Long id, User user) {
         AgentConfig agent = findOne(id, user);
+        autopilotSessionRepository.findByAgentId(agent.getId()).forEach(session -> {
+            autopilotEventRepository.deleteBySessionId(session.getId());
+            autopilotAssetRepository.deleteBySessionId(session.getId());
+            autopilotSessionRepository.delete(session);
+        });
         decisionRepository.deleteByAgentId(agent.getId());
         monteCarloRunRepository.deleteByAgentId(agent.getId());
         repository.delete(agent);

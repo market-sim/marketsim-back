@@ -104,6 +104,10 @@ public class AssistantService {
         this.model = model;
     }
 
+    String model() {
+        return model;
+    }
+
     public Status status() {
         return new Status(client() != null, model, offlineReason);
     }
@@ -230,7 +234,8 @@ public class AssistantService {
     }
 
     /** Client cree a la demande ; null si aucune cle n'est configuree (mode hors-ligne). */
-    private AnthropicClient client() {
+    /** Client Claude, ou null sans cle (partage avec ChartAnalysisService). */
+    AnthropicClient client() {
         if (client != null) return client;
         String key = System.getenv("ANTHROPIC_API_KEY");
         if (key == null || key.isBlank()) {
