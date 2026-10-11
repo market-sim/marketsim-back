@@ -77,6 +77,15 @@ public class MonteCarloRun {
 
     private double meanMaxDrawdown;
 
+    /** Taux de trades gagnants de l'agent sur l'ensemble des trajectoires. */
+    private double winRate;
+
+    // ----- Scenario de krach (null = aucun) -----
+    private Double crashPct;
+    private Integer crashDay;
+    private Double volMultiplier;
+    private Integer volDays;
+
     private long elapsedMs;
 
     private LocalDateTime createdAt;

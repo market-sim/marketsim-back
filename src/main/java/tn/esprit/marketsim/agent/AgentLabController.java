@@ -25,6 +25,9 @@ import tn.esprit.marketsim.agent.montecarlo.MonteCarloRun;
 import tn.esprit.marketsim.agent.dto.TournamentDtos.TournamentRequest;
 import tn.esprit.marketsim.agent.dto.TournamentDtos.TournamentResult;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloService;
+import tn.esprit.marketsim.agent.replay.ReplayService;
+import tn.esprit.marketsim.agent.replay.ReplayService.ReplayRequest;
+import tn.esprit.marketsim.agent.replay.ReplayService.ReplayResult;
 import tn.esprit.marketsim.agent.tournament.TournamentRun;
 import tn.esprit.marketsim.agent.tournament.TournamentService;
 import tn.esprit.marketsim.agent.training.QLearningTrainer;
@@ -41,6 +44,7 @@ public class AgentLabController {
     private final MonteCarloService monteCarloService;
     private final QLearningTrainer trainer;
     private final TournamentService tournamentService;
+    private final ReplayService replayService;
 
     // ----- Decisions & XAI -----
 
@@ -84,6 +88,14 @@ public class AgentLabController {
     @GetMapping("/{id}/policy")
     public List<PolicyState> policy(@PathVariable Long id, @AuthenticationPrincipal User user) {
         return trainer.policy(agentService.findOne(id, user));
+    }
+
+    // ----- Replay (demo humain vs agent) -----
+
+    @PostMapping("/{id}/replay")
+    public ReplayResult replay(@PathVariable Long id, @Valid @RequestBody ReplayRequest req,
+                               @AuthenticationPrincipal User user) {
+        return replayService.replay(agentService.findOne(id, user), req);
     }
 
     // ----- Tournoi entre agents (inference statistique) -----

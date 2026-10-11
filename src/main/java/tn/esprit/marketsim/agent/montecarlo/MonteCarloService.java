@@ -19,6 +19,7 @@ import tn.esprit.marketsim.agent.dto.AgentLabDtos.MonteCarloResult;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.RiskSummary;
 import tn.esprit.marketsim.agent.engine.AssetDynamics;
 import tn.esprit.marketsim.agent.engine.Backtester;
+import tn.esprit.marketsim.agent.engine.CrashScenario;
 import tn.esprit.marketsim.agent.engine.PathGenerator;
 import tn.esprit.marketsim.agent.engine.PathGenerator.Shocks;
 import tn.esprit.marketsim.agent.engine.PriceModel;
@@ -66,6 +67,7 @@ public class MonteCarloService {
         double capital = req.capital() != null && req.capital() > 0 ? req.capital() : 10_000;
         double s0 = asset.getPrice().doubleValue();
         double risk = agent.risk();
+        CrashScenario crash = crashScenario(req, horizon);
 
         // ---- 1. Simulation (parallele) ----
         int groups = antithetic ? (requested + 1) / 2 : requested;
@@ -75,7 +77,8 @@ public class MonteCarloService {
 
         IntStream.range(0, groups).parallel().forEach(g -> {
             SplittableRandom rng = new SplittableRandom(seed * 0x9E3779B97F4A7C15L + g);
-            Shocks shocks = PathGenerator.drawShocks(WARMUP + horizon, dynamics, model, rng);
+            Shocks drawn = PathGenerator.drawShocks(WARMUP + horizon, dynamics, model, rng);
+            Shocks shocks = crash == null ? drawn : crash.apply(drawn, WARMUP);
             int copies = antithetic ? 2 : 1;
             for (int c = 0; c < copies; c++) {
                 // l'historique demarre plus bas/haut pour que le jour 0 de la simulation soit au prix actuel
@@ -154,13 +157,31 @@ public class MonteCarloService {
         run.setBenchmarkMeanReturn(benchSummary.meanReturn());
         run.setMeanSharpe(agentSummary.meanSharpe());
         run.setMeanMaxDrawdown(agentSummary.meanMaxDrawdown());
+        run.setWinRate(trades == 0 ? 0 : wins / trades);
+        if (crash != null) {
+            run.setCrashPct(crash.dropPct() * 100);
+            run.setCrashDay(crash.day());
+            run.setVolMultiplier(crash.volMultiplier());
+            run.setVolDays(crash.volDays());
+        }
         run.setElapsedMs(elapsed);
         runRepository.save(run);
 
         return new MonteCarloResult(run.getId(), asset.getSymbol(), model, n, horizon, seed, antithetic,
                 dynamics.mu(), dynamics.sigma(), s0, elapsed, agentSummary, benchSummary,
                 (double) beats / n, trades / n, trades == 0 ? 0 : wins / trades, exposure / n,
-                fan, histogram, convergence, samples);
+                fan, histogram, convergence, samples,
+                crash == null ? null : crash.dropPct() * 100, crash == null ? null : crash.day(),
+                crash == null ? null : crash.volMultiplier(), crash == null ? null : crash.volDays());
+    }
+
+    /** Scenario de krach demande (null si aucun). */
+    static CrashScenario crashScenario(MonteCarloRequest req, int horizon) {
+        if (req.crashPct() == null || req.crashPct() <= 0) return null;
+        int day = req.crashDay() == null ? horizon / 4 : Math.max(1, Math.min(horizon, req.crashDay()));
+        double vol = req.volMultiplier() == null ? 2.0 : req.volMultiplier();
+        int volDays = req.volDays() == null ? 20 : Math.max(0, Math.min(horizon, req.volDays()));
+        return new CrashScenario(req.crashPct() / 100, day, vol, volDays);
     }
 
     public List<MonteCarloRun> history(AgentConfig agent) {

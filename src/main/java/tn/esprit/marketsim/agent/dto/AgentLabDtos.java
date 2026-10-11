@@ -38,9 +38,14 @@ public final class AgentLabDtos {
      * @param antithetic variables antithetiques (reduction de variance)
      * @param mu         drift annuel force (sinon calibration selon le type d'actif)
      * @param sigma      volatilite annuelle forcee
+     * @param crashPct   scenario "et si ?" : krach instantane en % (ex : 20 = -20 %), null = aucun
+     * @param crashDay   jour du krach dans l'horizon (defaut : 1/4 de l'horizon)
+     * @param volMultiplier volatilite multipliee apres le krach (defaut 2)
+     * @param volDays    duree du pic de volatilite (defaut 20 jours)
      */
     public record MonteCarloRequest(@NotBlank String symbol, Integer paths, Integer horizonDays, PriceModel model,
-                                    Long seed, Boolean antithetic, Double mu, Double sigma, Double capital) {
+                                    Long seed, Boolean antithetic, Double mu, Double sigma, Double capital,
+                                    Double crashPct, Integer crashDay, Double volMultiplier, Integer volDays) {
     }
 
     /** Statistiques de la distribution des resultats (rendements en fraction : 0.05 = +5 %). */
@@ -66,7 +71,8 @@ public final class AgentLabDtos {
                                    long elapsedMs, RiskSummary agent, RiskSummary benchmark,
                                    double probBeatBenchmark, double avgTrades, double winRate, double avgExposure,
                                    List<FanPoint> fan, List<HistogramBin> histogram,
-                                   List<ConvergencePoint> convergence, List<double[]> samplePaths) {
+                                   List<ConvergencePoint> convergence, List<double[]> samplePaths,
+                                   Double crashPct, Integer crashDay, Double volMultiplier, Integer volDays) {
     }
 
     // ===================== Entrainement Q-learning =====================

@@ -123,6 +123,18 @@ class AgentEngineTest {
     }
 
     @Test
+    void crashScenarioDropsPriceExactlyOnCrashDay() {
+        PathGenerator.Shocks shocks = PathGenerator.drawShocks(160, STOCK, PriceModel.GBM, new SplittableRandom(5));
+        CrashScenario crash = new CrashScenario(0.20, 50, 1.0, 0);
+        double[] normal = PathGenerator.build(100, shocks, STOCK, PriceModel.GBM, false);
+        double[] crashed = PathGenerator.build(100, crash.apply(shocks, 60), STOCK, PriceModel.GBM, false);
+        // avant le krach : identique ; a partir du jour 50 (index 110) : exactement -20 %
+        assertEquals(normal[109], crashed[109], 1e-9);
+        assertEquals(0.80, crashed[110] / normal[110], 1e-9);
+        assertEquals(0.80, crashed[160] / normal[160], 1e-9);
+    }
+
+    @Test
     void backtesterNeverTradesWhenPolicyHolds() {
         double[] p = PathGenerator.generate(100, 200, STOCK, PriceModel.GBM, new SplittableRandom(1));
         Backtester.Result r = Backtester.run(p, 60, (f, pos) ->

@@ -14,6 +14,9 @@ par renforcement (Q-learning).
 | IA | Simulation Monte Carlo : VaR, CVaR, drawdown, Sharpe, cône de projection | `agent/montecarlo/MonteCarloService` |
 | IA | Apprentissage par renforcement (Q-learning tabulaire) | `agent/training/QLearningTrainer` |
 | IA | Tournoi d'agents avec inférence statistique (tests appariés, bootstrap, Holm) | `agent/tournament/TournamentService` |
+| IA | Scénario « et si ? » : krach instantané + pic de volatilité dans le Monte Carlo | `agent/engine/CrashScenario` |
+| Démo | Replay humain vs agent vs buy & hold, jour par jour | `agent/replay/ReplayService` + `ReplayPanel.tsx` |
+| UX | Personnalités (Prudent / Équilibré / Agressif), jauge de confiance, bulle « j'achète parce que… », approbation 👍/👎 | frontend `modules/agent` |
 | Intégration | Un agent **actif** transforme ses BUY/SELL en vrais ordres du module 2, avec SL/TP | `DecisionService.execute` |
 
 ## 2. Modèles de marché (simulation des prix)
@@ -86,6 +89,37 @@ Le seuil θ et la pénalité de volatilité dépendent de l'appétit pour le ris
 
 Performance : environ 150 ms pour 2 000 trajectoires × 252 jours.
 
+## 6 bis. Scénario « et si le marché crashait ? »
+
+On impose à **toutes** les trajectoires un krach instantané de X % au jour J (saut `log(1 − X)` dans les chocs), suivi d'une période de panique :
+la volatilité est multipliée par k pendant D jours. Le même choc est appliqué aux deux trajectoires antithétiques.
+
+Préréglages disponibles : flash crash −10 %, krach −20 %, « type 2008 » −40 % (volatilité ×3 pendant 60 jours).
+
+Exemple (RL Agent, AAPL, 2 000 trajectoires) :
+
+| Scénario | Rendement agent | Rendement B&H | VaR 95 agent | VaR 95 B&H | Drawdown agent | Drawdown B&H |
+|---|---|---|---|---|---|---|
+| Aucun | +9,2 % | +8,7 % | 20 % | 44 % | −16 % | −32 % |
+| Krach −20 % | −2,5 % | −12,0 % | 29 % | 58 % | −22 % | −43 % |
+| Krach −40 % | −13,1 % | −34,0 % | 43 % | 69 % | −30 % | −57 % |
+
+L'agent amortit le choc : il réduit sa perte d'environ 60 %, grâce au stop-loss et à la détection de la tendance baissière.
+
+## 6 ter. Replay humain vs agent (démo)
+
+Un marché simulé défile en accéléré (5 à 40 jours/s). L'utilisateur trade à la main (B = acheter, S = vendre, espace = pause)
+pendant que l'agent trade seul sur les mêmes prix. Le backtester enregistre la trace jour par jour : action voulue, confiance,
+événements (achat, vente, stop-loss, take-profit).
+
+Pendant la partie, on voit en direct :
+- les courbes de portefeuille superposées (humain, agent, buy & hold) ;
+- une jauge de confiance de l'agent ;
+- un classement live ;
+- un krach surprise en option.
+
+À la fin, le jeu rappelle qu'une seule partie peut être due à la chance, et renvoie vers le tournoi statistique.
+
 ## 7. Tournoi d'agents et tests statistiques
 
 « L'agent A est meilleur que B » ne veut rien dire si l'écart vient du hasard. Le tournoi le **prouve** statistiquement :
@@ -136,12 +170,13 @@ L'agent prudent apprend à rester hors du marché : c'est l'optimum moyenne-vari
 | POST | `/api/agents/{id}/decide` | décision expliquée sur chaque actif autorisé |
 | GET | `/api/agents/{id}/decisions` | 50 dernières décisions |
 | PATCH | `/api/agents/decisions/{id}/rating` | `{rating: 1..5, comment}` |
-| POST | `/api/agents/{id}/montecarlo` | `{symbol, paths, horizonDays, model, seed, antithetic, mu, sigma}` |
+| POST | `/api/agents/{id}/montecarlo` | `{symbol, paths, horizonDays, model, seed, antithetic, mu, sigma, crashPct, crashDay, volMultiplier, volDays}` |
 | GET | `/api/agents/{id}/montecarlo/runs` | historique des simulations |
 | POST | `/api/agents/{id}/train` | `{symbol, episodes, model, seed}` (stratégie Q_LEARNING) |
 | GET | `/api/agents/{id}/policy` | politique apprise (36 états) |
 | POST | `/api/agents/tournaments` | `{agentIds, symbol, paths, horizonDays, model, seed, antithetic}` |
 | GET | `/api/agents/tournaments` | historique des tournois |
+| POST | `/api/agents/{id}/replay` | `{symbol, days, model, seed, crashPct}` → trace jour par jour |
 
 ## 10. Tests
 
@@ -156,6 +191,7 @@ Ce qui est vérifié :
 - jump-diffusion : même espérance que le GBM mais queue gauche plus épaisse ;
 - variables antithétiques : variance de l'estimateur réduite de plus de 50 % ;
 - VaR, CVaR et max drawdown sur des cas calculés à la main ;
+- scénario de krach : prix identique avant le jour J, puis exactement −20 % ;
 - additivité des valeurs SHAP, et HOLD avec confiance 100 % sur un marché neutre ;
 - sérialisation de la Q-table ;
 - backtest sans trade quand la politique ne fait que HOLD ;
