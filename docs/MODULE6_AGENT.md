@@ -1,0 +1,138 @@
+# Module 6 — Agent de Trading Intelligent
+
+Un agent autonome qui **décide** d'acheter ou de vendre, **explique** chaque décision (XAI),
+se **teste** sur des milliers de futurs possibles (Monte Carlo) et peut **apprendre** seul
+par renforcement (Q-learning).
+
+## 1. Vue d'ensemble
+
+| Partie | Ce que fait l'agent | Où dans le code |
+|---|---|---|
+| CRUD | Créer / modifier / activer / supprimer des agents (stratégie, risque, actifs, capital) | `agent/AgentConfig*` |
+| CRUD | Historique des décisions + évaluation par l'utilisateur (1 à 5 étoiles) | `agent/decision/` |
+| IA | Décision expliquée (valeurs SHAP exactes ou attribution par occlusion) | `agent/engine/LinearPolicy`, `QLearningPolicy` |
+| IA | Simulation Monte Carlo : VaR, CVaR, drawdown, Sharpe, cône de projection | `agent/montecarlo/MonteCarloService` |
+| IA | Apprentissage par renforcement (Q-learning tabulaire) | `agent/training/QLearningTrainer` |
+| Intégration | Un agent **actif** transforme ses BUY/SELL en vrais ordres du module 2, avec SL/TP | `DecisionService.execute` |
+
+## 2. Modèles de marché (simulation des prix)
+
+Pas journalier, `dt = 1/252`. Calibration par classe d'actif (`AssetDynamics`), par exemple action : μ = 8 %, σ = 30 %.
+
+- **GBM (Black-Scholes)** : `ln(S[t+1]/S[t]) = (μ − σ²/2)·dt + σ·√dt·Z`, avec `Z ~ N(0,1)`.
+- **Merton jump-diffusion (1976)** : GBM + sauts `J ~ N(μJ, σJ)` arrivant selon un processus de Poisson (λ par an).
+  Le drift est compensé (`μ − λk`, avec `k = e^(μJ+σJ²/2) − 1`), donc l'espérance est la même mais avec **plus de krachs** (queue gauche épaisse).
+- **Changement de régimes (Hamilton 1989)** : une chaîne de Markov cachée alterne un marché haussier (drift +20 %, vol ×0,8, durée moyenne ≈ 67 j)
+  et un marché baissier (drift −33 %, vol ×1,5, durée moyenne ≈ 40 j). La loi stationnaire (62,5 % / 37,5 %) garde le drift moyen = μ.
+  Les régimes persistent, donc **la tendance devient partiellement prévisible**, comme sur les vrais marchés.
+
+> Sous GBM pur, le prix est une marche aléatoire : aucune stratégie basée sur le passé ne bat le marché en espérance.
+> C'est vérifiable dans l'application, et c'est un bon point à montrer en soutenance.
+
+## 3. Ce que l'agent observe (`MarketFeatures`)
+
+Variables normalisées (0 = marché neutre) :
+
+| Variable | Calcul |
+|---|---|
+| Momentum 20j | rendement log sur 20 jours / (σ₂₀·√20) / 2 |
+| Tendance | (MM10/MM30 − 1) / (σ₂₀·√10) / 2 |
+| RSI 14 | (RSI − 50) / 50 |
+| Retour à la moyenne | −z-score de Bollinger (20 j) / 2 |
+| Volatilité | σ réalisée 20 j annualisée / σ normale − 1 |
+
+## 4. Les 3 cerveaux
+
+**Momentum / Mean Reversion — modèle linéaire**
+`score = Σ wᵢ·xᵢ` → BUY si `score > θ`, SELL si `score < −θ`, sinon HOLD.
+Le seuil θ et la pénalité de volatilité dépendent de l'appétit pour le risque.
+
+**Q-learning (Watkins 1989)**
+- État : tendance (3) × RSI (3) × volatilité (2) × position (2) = **36 états** ; actions HOLD / BUY / SELL.
+- Récompense quotidienne : `P&L×100 − frais − λ·(P&L×100)²`, avec `λ = 0,02·(1 − risque)` (aversion à la variance).
+- Mise à jour : `Q(s,a) ← Q(s,a) + α[r + γ·max Q(s',·) − Q(s,a)]`, γ = 0,95.
+- **α(s,a) = 1/(1+n)^0,6** : un pas décroissant qui respecte les conditions de Robbins-Monro (convergence).
+  Avec un α fixe, l'agent n'apprenait rien : le bruit journalier (≈ 1,5) écrase le signal (≈ 0,1).
+- Exploration ε-greedy, ε décroît de 1 à 0,05.
+- Chaque épisode = 1 an de marché simulé. À la fin, l'agent est **évalué hors échantillon** sur 300 marchés jamais vus.
+
+## 5. Explicabilité (XAI)
+
+- **Modèle linéaire → valeurs SHAP exactes.** Avec la référence x = 0, la valeur de Shapley d'un modèle linéaire vaut `wᵢ·xᵢ`.
+  La somme des contributions est égale au score (propriété d'additivité, vérifiée par un test unitaire).
+- **Q-learning → attribution par occlusion.** On remet chaque variable à sa valeur neutre, et la contribution = la baisse de l'avantage
+  `Q(s,a*) − moyenne Q(s,·)` de l'action choisie.
+- Une explication en français est générée à partir des 3 facteurs principaux. Le frontend montre des barres divergentes par décision
+  et l'importance globale (moyenne de |SHAP|).
+
+## 6. Simulation Monte Carlo
+
+1. On tire N trajectoires (100 à 5 000) en **parallèle**, avec 60 jours d'historique pour les indicateurs, puis l'horizon (20 à 504 jours).
+2. **Variables antithétiques** : chaque tirage Z sert aussi à la trajectoire −Z. Résultat : réduction de variance de plus de 50 %, prouvée par un test.
+3. Sur chaque trajectoire, l'agent trade (frais 0,1 %, taille selon le risque, stop-loss à k·σ·√10, take-profit à 2× le stop),
+   et on compare au buy & hold sur la même trajectoire.
+4. Indicateurs calculés :
+   - rendement moyen et médian ;
+   - **VaR 95/99 %** et **CVaR 95 %** (Expected Shortfall) ;
+   - P(gain), P(battre le buy & hold) ;
+   - drawdown max moyen et pire drawdown ;
+   - Sharpe ;
+   - **cône de projection** (percentiles 5/25/50/75/95 jour par jour) ;
+   - histogramme des rendements ;
+   - **convergence** de l'estimateur (moyenne ± 1,96·σ/√n).
+5. **Reproductible** : chaque trajectoire a une graine dérivée du seed. Même seed = même résultat, quel que soit l'ordre des threads.
+   Le bouton « Rejouer » de l'historique le démontre.
+
+Performance : environ 150 ms pour 2 000 trajectoires × 252 jours.
+
+## 7. Résultats obtenus
+
+Modèle à régimes, AAPL, Q-learning 3 000 épisodes, évaluation sur 300 marchés jamais vus :
+
+| Risque | Rendement agent | Buy & hold | Sharpe agent | Sharpe B&H | Drawdown agent | Drawdown B&H |
+|---|---|---|---|---|---|---|
+| 80 | +10,2 % | +8,6 % | 0,48 | 0,26 | −17 % | −32 % |
+| 50 | +7,5 % | +8,6 % | 0,46 | 0,26 | −14 % | −32 % |
+| 20 | ≈ 0 % | +8,6 % | — | 0,26 | ≈ 0 % | −32 % |
+
+L'agent prudent apprend à rester hors du marché : c'est l'optimum moyenne-variance quand λ est grand.
+
+## 8. API
+
+| Méthode | URL | Rôle |
+|---|---|---|
+| GET/POST | `/api/agents` | lister / créer |
+| PUT/DELETE | `/api/agents/{id}` | modifier / supprimer (avec son historique) |
+| PATCH | `/api/agents/{id}/toggle` | activer / mettre en pause |
+| POST | `/api/agents/{id}/decide` | décision expliquée sur chaque actif autorisé |
+| GET | `/api/agents/{id}/decisions` | 50 dernières décisions |
+| PATCH | `/api/agents/decisions/{id}/rating` | `{rating: 1..5, comment}` |
+| POST | `/api/agents/{id}/montecarlo` | `{symbol, paths, horizonDays, model, seed, antithetic, mu, sigma}` |
+| GET | `/api/agents/{id}/montecarlo/runs` | historique des simulations |
+| POST | `/api/agents/{id}/train` | `{symbol, episodes, model, seed}` (stratégie Q_LEARNING) |
+| GET | `/api/agents/{id}/policy` | politique apprise (36 états) |
+
+## 9. Tests
+
+`src/test/java/.../agent/engine/AgentEngineTest.java` (sans base de données), lancés avec :
+
+```bash
+./mvnw test -Dtest=AgentEngineTest
+```
+
+Ce qui est vérifié :
+- E[S_T] du GBM égale à `S₀·e^(μT)` à 1 % près ;
+- jump-diffusion : même espérance que le GBM mais queue gauche plus épaisse ;
+- variables antithétiques : variance de l'estimateur réduite de plus de 50 % ;
+- VaR, CVaR et max drawdown sur des cas calculés à la main ;
+- additivité des valeurs SHAP, et HOLD avec confiance 100 % sur un marché neutre ;
+- sérialisation de la Q-table ;
+- backtest sans trade quand la politique ne fait que HOLD.
+
+## 10. Limites et pistes
+
+- Le module 5 ne stocke qu'un prix courant. L'historique récent utilisé pour décider est donc **simulé** (graine changeant chaque minute).
+  À brancher sur l'historique réel des cotations quand il existera.
+- La calibration (μ, σ) est fixée par classe d'actif. Une piste : l'estimer par maximum de vraisemblance sur les données historiques.
+- RL tabulaire (36 états). Une piste : un DQN (réseau de neurones) dans un microservice Python.
+- Volet blockchain : ancrer le hash `(seed, paramètres, résultat)` de chaque simulation pour certifier les résultats (cas d'usage n°2 du cahier des charges).
