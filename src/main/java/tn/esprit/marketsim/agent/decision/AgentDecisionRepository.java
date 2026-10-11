@@ -11,5 +11,8 @@ public interface AgentDecisionRepository extends JpaRepository<AgentDecision, Lo
 
     Optional<AgentDecision> findByIdAndAgentOwnerId(Long id, Long ownerId);
 
+    /** Dernieres decisions de tous les agents d'un utilisateur (contexte de l'assistant). */
+    List<AgentDecision> findTop8ByAgentOwnerIdOrderByCreatedAtDescIdDesc(Long ownerId);
+
     void deleteByAgentId(Long agentId);
 }
