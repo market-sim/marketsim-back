@@ -13,6 +13,7 @@ par renforcement (Q-learning).
 | IA | Décision expliquée (valeurs SHAP exactes ou attribution par occlusion) | `agent/engine/LinearPolicy`, `QLearningPolicy` |
 | IA | Simulation Monte Carlo : VaR, CVaR, drawdown, Sharpe, cône de projection | `agent/montecarlo/MonteCarloService` |
 | IA | Apprentissage par renforcement (Q-learning tabulaire) | `agent/training/QLearningTrainer` |
+| IA | Tournoi d'agents avec inférence statistique (tests appariés, bootstrap, Holm) | `agent/tournament/TournamentService` |
 | Intégration | Un agent **actif** transforme ses BUY/SELL en vrais ordres du module 2, avec SL/TP | `DecisionService.execute` |
 
 ## 2. Modèles de marché (simulation des prix)
@@ -85,7 +86,35 @@ Le seuil θ et la pénalité de volatilité dépendent de l'appétit pour le ris
 
 Performance : environ 150 ms pour 2 000 trajectoires × 252 jours.
 
-## 7. Résultats obtenus
+## 7. Tournoi d'agents et tests statistiques
+
+« L'agent A est meilleur que B » ne veut rien dire si l'écart vient du hasard. Le tournoi le **prouve** statistiquement :
+
+1. **Nombres aléatoires communs (CRN).** Tous les agents et le buy & hold tradent les **mêmes** N marchés simulés.
+   La chance du marché s'annule dans la différence A − B, dont la variance est divisée (colonne « Gain CRN »).
+2. **Unité statistique.** Avec les variables antithétiques, les trajectoires (Z, −Z) sont corrélées : on teste sur la moyenne de chaque paire, qui sont des observations i.i.d.
+3. **Classement** par ratio de Sharpe moyen (performance ajustée du risque).
+4. Pour chaque paire, sur les différences par marché :
+   - **test t apparié** : `t = moy(d)/(σ(d)/√n)`, loi de Student à n−1 degrés de liberté (bêta incomplète implémentée et vérifiée contre les tables) ;
+   - **bootstrap** (2 000 rééchantillons) : intervalle de confiance à 95 % et p-value sans hypothèse de normalité ;
+   - **test des signes** (non paramétrique) et taux de victoire ;
+   - **d de Cohen** (taille d'effet) ;
+   - **correction de Holm-Bonferroni**, car avec k concurrents on fait k(k−1)/2 tests.
+5. Le module génère un verdict en français et une matrice de significativité.
+
+Exemple (AAPL, régimes, 2 000 marchés, 373 ms) :
+
+| # | Concurrent | Sharpe | Rendement | VaR 95 | Drawdown |
+|---|---|---|---|---|---|
+| 1 | RL Agent (Q-learning, risque 75) | 0,44 | +9,2 % | 20 % | −16 % |
+| 2 | Buy & Hold | 0,28 | +8,7 % | 44 % | −32 % |
+| 3 | Alpha Momentum | 0,19 | +3,6 % | 16 % | −13 % |
+| 4 | Contrarian (mean reversion) | 0,17 | +0,8 % | 25 % | −16 % |
+
+Le RL bat significativement tous les autres (p corrigée < 0,0001). En revanche, Momentum et Contrarian sont **statistiquement indiscernables**
+(p corrigée = 0,56, IC bootstrap qui contient 0) : le test évite de conclure à tort.
+
+## 8. Résultats obtenus (entraînement RL)
 
 Modèle à régimes, AAPL, Q-learning 3 000 épisodes, évaluation sur 300 marchés jamais vus :
 
@@ -97,7 +126,7 @@ Modèle à régimes, AAPL, Q-learning 3 000 épisodes, évaluation sur 300 march
 
 L'agent prudent apprend à rester hors du marché : c'est l'optimum moyenne-variance quand λ est grand.
 
-## 8. API
+## 9. API
 
 | Méthode | URL | Rôle |
 |---|---|---|
@@ -111,13 +140,15 @@ L'agent prudent apprend à rester hors du marché : c'est l'optimum moyenne-vari
 | GET | `/api/agents/{id}/montecarlo/runs` | historique des simulations |
 | POST | `/api/agents/{id}/train` | `{symbol, episodes, model, seed}` (stratégie Q_LEARNING) |
 | GET | `/api/agents/{id}/policy` | politique apprise (36 états) |
+| POST | `/api/agents/tournaments` | `{agentIds, symbol, paths, horizonDays, model, seed, antithetic}` |
+| GET | `/api/agents/tournaments` | historique des tournois |
 
-## 9. Tests
+## 10. Tests
 
 `src/test/java/.../agent/engine/AgentEngineTest.java` (sans base de données), lancés avec :
 
 ```bash
-./mvnw test -Dtest=AgentEngineTest
+./mvnw test -Dtest="AgentEngineTest,StatisticalTestsTest"
 ```
 
 Ce qui est vérifié :
@@ -127,9 +158,12 @@ Ce qui est vérifié :
 - VaR, CVaR et max drawdown sur des cas calculés à la main ;
 - additivité des valeurs SHAP, et HOLD avec confiance 100 % sur un marché neutre ;
 - sérialisation de la Q-table ;
-- backtest sans trade quand la politique ne fait que HOLD.
+- backtest sans trade quand la politique ne fait que HOLD ;
+- p-values de Student et loi normale égales aux tables de référence ;
+- correction de Holm sur un exemple classique ;
+- le test apparié détecte une vraie différence, sans faux positif sur du bruit, avec un gain CRN supérieur à ×100.
 
-## 10. Limites et pistes
+## 11. Limites et pistes
 
 - Le module 5 ne stocke qu'un prix courant. L'historique récent utilisé pour décider est donc **simulé** (graine changeant chaque minute).
   À brancher sur l'historique réel des cotations quand il existera.

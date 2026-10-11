@@ -22,11 +22,15 @@ import tn.esprit.marketsim.agent.dto.AgentLabDtos.RatingRequest;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.TrainingRequest;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.TrainingResult;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloRun;
+import tn.esprit.marketsim.agent.dto.TournamentDtos.TournamentRequest;
+import tn.esprit.marketsim.agent.dto.TournamentDtos.TournamentResult;
 import tn.esprit.marketsim.agent.montecarlo.MonteCarloService;
+import tn.esprit.marketsim.agent.tournament.TournamentRun;
+import tn.esprit.marketsim.agent.tournament.TournamentService;
 import tn.esprit.marketsim.agent.training.QLearningTrainer;
 import tn.esprit.marketsim.user.User;
 
-/** Module 6 (partie IA) : decisions expliquees, simulation Monte Carlo, apprentissage par renforcement. */
+/** Module 6 (partie IA) : decisions expliquees, Monte Carlo, apprentissage par renforcement, tournoi. */
 @RestController
 @RequestMapping("/api/agents")
 @RequiredArgsConstructor
@@ -36,6 +40,7 @@ public class AgentLabController {
     private final DecisionService decisionService;
     private final MonteCarloService monteCarloService;
     private final QLearningTrainer trainer;
+    private final TournamentService tournamentService;
 
     // ----- Decisions & XAI -----
 
@@ -79,5 +84,17 @@ public class AgentLabController {
     @GetMapping("/{id}/policy")
     public List<PolicyState> policy(@PathVariable Long id, @AuthenticationPrincipal User user) {
         return trainer.policy(agentService.findOne(id, user));
+    }
+
+    // ----- Tournoi entre agents (inference statistique) -----
+
+    @PostMapping("/tournaments")
+    public TournamentResult tournament(@Valid @RequestBody TournamentRequest req, @AuthenticationPrincipal User user) {
+        return tournamentService.run(user, req);
+    }
+
+    @GetMapping("/tournaments")
+    public List<TournamentRun> tournaments(@AuthenticationPrincipal User user) {
+        return tournamentService.history(user);
     }
 }
