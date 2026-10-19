@@ -3,6 +3,7 @@ package tn.esprit.marketsim.agent.training;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.IntStream;
@@ -28,6 +29,7 @@ import tn.esprit.marketsim.agent.engine.PriceModel;
 import tn.esprit.marketsim.agent.engine.QLearningPolicy;
 import tn.esprit.marketsim.agent.engine.QTable;
 import tn.esprit.marketsim.agent.engine.Stats;
+import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.market.Asset;
 
 /**
@@ -60,6 +62,7 @@ public class QLearningTrainer {
 
     private final AgentLabSupport support;
     private final AgentConfigRepository agentRepository;
+    private final AuditLedger ledger;
 
     public TrainingResult train(AgentConfig agent, TrainingRequest req) {
         if (agent.getStrategy() != AgentStrategy.Q_LEARNING) {
@@ -92,27 +95,9 @@ public class QLearningTrainer {
             MarketFeatures[] features = new MarketFeatures[p.length];
             for (int t = WARMUP; t < p.length; t++) features[t] = MarketFeatures.compute(p, t, dynamics.sigma());
 
-            int position = 0;
-            double episodeReward = 0;
-            double logWealth = 0;
-            for (int t = WARMUP; t < p.length - 1; t++) {
-                int s = QTable.state(features[t], position);
-                visits[s]++;
-                int a = rng.nextDouble() < epsilon ? rng.nextInt(QTable.ACTIONS) : table.best(s);
-                int newPosition = a == AgentAction.BUY.ordinal() ? 1 : a == AgentAction.SELL.ordinal() ? 0 : position;
-
-                double r = Math.log(p[t + 1] / p[t]);
-                double pnl = newPosition * r * 100;
-                double reward = pnl - cost * Math.abs(newPosition - position) - lambda * pnl * pnl;
-
-                int next = QTable.state(features[t + 1], newPosition);
-                double alpha = Math.max(ALPHA_MIN, Math.pow(1 + updates[s][a]++, -ALPHA_DECAY));
-                table.update(s, a, reward + GAMMA * table.max(next), alpha);
-
-                episodeReward += reward;
-                logWealth += newPosition * r - Backtester.COST * Math.abs(newPosition - position);
-                position = newPosition;
-            }
+            double[] outcome = learnEpisode(table, visits, updates, p, features, epsilon, lambda, cost, rng);
+            double episodeReward = outcome[0];
+            double logWealth = outcome[1];
 
             chunkReward += episodeReward;
             chunkReturn += Math.exp(logWealth) - 1;
@@ -133,8 +118,83 @@ public class QLearningTrainer {
         agentRepository.save(agent);
 
         Evaluation evaluation = evaluate(table, dynamics, model, risk, seed);
+        auditTraining(agent, asset, model, episodes, seed, evaluation);
         return new TrainingResult(asset.getSymbol(), model, episodes, seed,
                 System.currentTimeMillis() - started, curve, policy(table, visits), evaluation);
+    }
+
+    /** Certifie la politique apprise : empreinte de la Q-table + conditions d'entrainement + score hors echantillon. */
+    private void auditTraining(AgentConfig agent, Asset asset, PriceModel model, int episodes, long seed, Evaluation e) {
+        Map<String, Object> p = support.auditContext(agent);
+        p.put("symbol", asset.getSymbol());
+        p.put("model", String.valueOf(model));
+        p.put("episodes", episodes);
+        p.put("seed", seed);
+        p.put("evalPaths", e.paths());
+        p.put("evalMeanReturn", e.meanReturn());
+        p.put("evalBenchmarkMeanReturn", e.benchmarkMeanReturn());
+        p.put("evalProbBeatBenchmark", e.probBeatBenchmark());
+        p.put("evalMeanSharpe", e.meanSharpe());
+        p.put("evalBenchmarkMeanSharpe", e.benchmarkMeanSharpe());
+        ledger.record("TRAINING", agent.getId(), agent.getOwnerId(), agent.getId(),
+                String.format(java.util.Locale.FRANCE, "Entraînement RL %s · %d épisodes", asset.getSymbol(), episodes), p);
+    }
+
+    /**
+     * Un episode d'apprentissage sur la trajectoire {@code p} (indicateurs deja calcules a partir de WARMUP).
+     *
+     * @return {recompense cumulee, log-richesse de l'episode}
+     */
+    private static double[] learnEpisode(QTable table, int[] visits, int[][] updates, double[] p,
+                                         MarketFeatures[] features, double epsilon, double lambda, double cost,
+                                         SplittableRandom rng) {
+        int position = 0;
+        double episodeReward = 0;
+        double logWealth = 0;
+        for (int t = WARMUP; t < p.length - 1; t++) {
+            int s = QTable.state(features[t], position);
+            visits[s]++;
+            int a = rng.nextDouble() < epsilon ? rng.nextInt(QTable.ACTIONS) : table.best(s);
+            int newPosition = a == AgentAction.BUY.ordinal() ? 1 : a == AgentAction.SELL.ordinal() ? 0 : position;
+
+            double r = Math.log(p[t + 1] / p[t]);
+            double pnl = newPosition * r * 100;
+            double reward = pnl - cost * Math.abs(newPosition - position) - lambda * pnl * pnl;
+
+            int next = QTable.state(features[t + 1], newPosition);
+            double alpha = Math.max(ALPHA_MIN, Math.pow(1 + updates[s][a]++, -ALPHA_DECAY));
+            table.update(s, a, reward + GAMMA * table.max(next), alpha);
+
+            episodeReward += reward;
+            logWealth += newPosition * r - Backtester.COST * Math.abs(newPosition - position);
+            position = newPosition;
+        }
+        return new double[] {episodeReward, logWealth};
+    }
+
+    /**
+     * Apprend sur un historique REEL (rejoue la meme serie a chaque episode, exploration epsilon-greedy).
+     * Utilise par le walk-forward : on n'entraine que sur le passe de la fenetre de test.
+     *
+     * @param sigma volatilite annuelle de reference (estimee sur la fenetre d'entrainement)
+     */
+    public static QTable trainOnSeries(double[] prices, double sigma, double risk, int episodes, long seed) {
+        if (prices.length < WARMUP + 30) {
+            throw new IllegalArgumentException("Historique d'entraînement trop court");
+        }
+        QTable table = new QTable();
+        int[] visits = new int[QTable.STATES];
+        int[][] updates = new int[QTable.STATES][QTable.ACTIONS];
+        SplittableRandom rng = new SplittableRandom(seed);
+        MarketFeatures[] features = new MarketFeatures[prices.length];
+        for (int t = WARMUP; t < prices.length; t++) features[t] = MarketFeatures.compute(prices, t, sigma);
+        double lambda = 0.02 * (1 - risk);
+        double cost = Backtester.COST * 100;
+        for (int ep = 0; ep < episodes; ep++) {
+            double epsilon = Math.max(EPSILON_MIN, 1 - (double) ep / (0.7 * episodes));
+            learnEpisode(table, visits, updates, prices, features, epsilon, lambda, cost, rng);
+        }
+        return table;
     }
 
     /** Politique courante d'un agent deja entraine (pour la heatmap du frontend). */

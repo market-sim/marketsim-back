@@ -2,6 +2,8 @@ package tn.esprit.marketsim.agent.montecarlo;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.IntStream;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Service;
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.agent.AgentConfig;
 import tn.esprit.marketsim.agent.AgentLabSupport;
+import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.ConvergencePoint;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.FanPoint;
 import tn.esprit.marketsim.agent.dto.AgentLabDtos.HistogramBin;
@@ -52,6 +55,7 @@ public class MonteCarloService {
 
     private final AgentLabSupport support;
     private final MonteCarloRunRepository runRepository;
+    private final AuditLedger ledger;
 
     public MonteCarloResult run(AgentConfig agent, MonteCarloRequest req) {
         long started = System.currentTimeMillis();
@@ -166,6 +170,7 @@ public class MonteCarloService {
         }
         run.setElapsedMs(elapsed);
         runRepository.save(run);
+        auditRun(agent, run, agentSummary, benchSummary, s0);
 
         return new MonteCarloResult(run.getId(), asset.getSymbol(), model, n, horizon, seed, antithetic,
                 dynamics.mu(), dynamics.sigma(), s0, elapsed, agentSummary, benchSummary,
@@ -173,6 +178,38 @@ public class MonteCarloService {
                 fan, histogram, convergence, samples,
                 crash == null ? null : crash.dropPct() * 100, crash == null ? null : crash.day(),
                 crash == null ? null : crash.volMultiplier(), crash == null ? null : crash.volDays());
+    }
+
+    /**
+     * Fige la simulation dans le registre d'audit : parametres complets + graine + empreinte de la politique,
+     * donc n'importe qui peut la rejouer et comparer le resultat a celui qui a ete certifie.
+     */
+    private void auditRun(AgentConfig agent, MonteCarloRun run, RiskSummary a, RiskSummary b, double startPrice) {
+        Map<String, Object> p = support.auditContext(agent);
+        p.put("symbol", run.getSymbol());
+        p.put("model", String.valueOf(run.getModel()));
+        p.put("paths", run.getPaths());
+        p.put("horizonDays", run.getHorizonDays());
+        p.put("seed", run.getSeed());
+        p.put("antithetic", run.isAntithetic());
+        p.put("mu", run.getMu());
+        p.put("sigma", run.getSigma());
+        p.put("startPrice", startPrice);
+        p.put("crashPct", run.getCrashPct());
+        p.put("crashDay", run.getCrashDay());
+        p.put("volMultiplier", run.getVolMultiplier());
+        p.put("volDays", run.getVolDays());
+        p.put("agentMeanReturn", a.meanReturn());
+        p.put("agentVar95", a.var95());
+        p.put("agentCvar95", a.cvar95());
+        p.put("agentMeanSharpe", a.meanSharpe());
+        p.put("agentMeanMaxDrawdown", a.meanMaxDrawdown());
+        p.put("benchmarkMeanReturn", b.meanReturn());
+        p.put("benchmarkVar95", b.var95());
+        p.put("probBeatBenchmark", run.getProbBeatBenchmark());
+        ledger.record("MONTE_CARLO", run.getId(), agent.getOwnerId(), agent.getId(),
+                String.format(Locale.FRANCE, "Monte Carlo %s · %d trajectoires · rendement moyen %+.1f %%", run.getSymbol(),
+                        run.getPaths(), a.meanReturn() * 100), p);
     }
 
     /** Scenario de krach demande (null si aucun). */

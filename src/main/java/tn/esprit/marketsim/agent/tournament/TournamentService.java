@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.SplittableRandom;
 import java.util.concurrent.ThreadLocalRandom;
@@ -28,6 +30,7 @@ import tn.esprit.marketsim.agent.engine.PathGenerator.Shocks;
 import tn.esprit.marketsim.agent.engine.PriceModel;
 import tn.esprit.marketsim.agent.engine.Stats;
 import tn.esprit.marketsim.agent.engine.TradingPolicy;
+import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.market.Asset;
 import tn.esprit.marketsim.user.User;
 
@@ -60,6 +63,7 @@ public class TournamentService {
     private final AgentConfigService agentService;
     private final AgentLabSupport support;
     private final TournamentRunRepository runRepository;
+    private final AuditLedger ledger;
 
     public TournamentResult run(User user, TournamentRequest req) {
         long started = System.currentTimeMillis();
@@ -188,9 +192,39 @@ public class TournamentService {
         run.setConclusion(conclusion.length() > 1000 ? conclusion.substring(0, 1000) : conclusion);
         run.setElapsedMs(elapsed);
         runRepository.save(run);
+        auditRun(user, agents, run, ranking);
 
         return new TournamentResult(run.getId(), asset.getSymbol(), model, n, horizon, seed, antithetic, elapsed,
                 BOOTSTRAP_SAMPLES, ranking, medianEquity, returnTests, sharpeTests, conclusion);
+    }
+
+    /** Fige le tournoi dans le registre d'audit : participants (avec l'empreinte de leur politique), parametres et verdict. */
+    private void auditRun(User user, List<AgentConfig> agents, TournamentRun run, List<Competitor> ranking) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("symbol", run.getSymbol());
+        p.put("model", String.valueOf(run.getModel()));
+        p.put("paths", run.getPaths());
+        p.put("horizonDays", run.getHorizonDays());
+        p.put("seed", run.getSeed());
+        p.put("antithetic", run.isAntithetic());
+        p.put("participants", agents.stream().map(a -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("agentId", a.getId());
+            m.put("name", a.getName());
+            m.put("policy", support.policyFingerprint(a));
+            return m;
+        }).toList());
+        p.put("ranking", ranking.stream().map(c -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("rank", c.rank());
+            m.put("name", c.name());
+            m.put("meanReturn", c.meanReturn());
+            m.put("meanSharpe", c.meanSharpe());
+            return m;
+        }).toList());
+        p.put("conclusion", run.getConclusion());
+        ledger.record("TOURNAMENT", run.getId(), user.getId(), null,
+                "Tournoi " + run.getSymbol() + " · vainqueur : " + run.getWinner(), p);
     }
 
     public List<TournamentRun> history(User user) {
@@ -242,7 +276,7 @@ public class TournamentService {
     /**
      * @return {moyenne, IC bas, IC haut, t, p(t), p(bootstrap), p(signes), taux de victoire, d de Cohen, gain de variance}
      */
-    static double[] compare(double[] x, double[] y, SplittableRandom rng) {
+    public static double[] compare(double[] x, double[] y, SplittableRandom rng) {
         int n = x.length;
         double[] d = new double[n];
         int wins = 0;

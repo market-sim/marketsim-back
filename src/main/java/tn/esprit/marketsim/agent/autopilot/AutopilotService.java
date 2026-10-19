@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.SplittableRandom;
 import java.util.concurrent.ThreadLocalRandom;
@@ -37,6 +38,7 @@ import tn.esprit.marketsim.agent.engine.Stats;
 import tn.esprit.marketsim.agent.engine.TradingPolicy;
 import tn.esprit.marketsim.agent.engine.TradingPolicy.PolicyDecision;
 import tn.esprit.marketsim.common.NotFoundException;
+import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.market.Asset;
 
 /**
@@ -64,6 +66,7 @@ public class AutopilotService {
     private final AgentLabSupport support;
     private final DecisionService decisionService;
     private final AnomalyService anomalyService;
+    private final AuditLedger ledger;
 
     // =================================================================================== API
 
@@ -362,6 +365,22 @@ public class AutopilotService {
         s.setStatus(AutopilotSession.Status.STOPPED);
         s.setStopReason(reason);
         event(s, type, null, null, null, lastEquity(s), null, reason);
+        auditHalt(s, type, reason);
+    }
+
+    /** Un arret automatique (perte maximale, coupe-circuit) est une preuve de securite : on la fige dans le registre d'audit. */
+    private void auditHalt(AutopilotSession s, Type type, String reason) {
+        AgentConfig agent = s.getAgent();
+        Map<String, Object> p = support.auditContext(agent);
+        p.put("sessionId", s.getId());
+        p.put("reason", type.name());
+        p.put("message", reason);
+        p.put("step", s.getStep());
+        p.put("equity", lastEquity(s));
+        p.put("maxLossPct", s.getMaxLossPct());
+        p.put("trades", s.getTrades());
+        ledger.record("AUTOPILOT_HALT", s.getId(), agent.getOwnerId(), agent.getId(),
+                (type == Type.KILL_SWITCH ? "Coupe-circuit" : "Perte maximale") + " · " + agent.getName(), p);
     }
 
     private void event(AutopilotSession s, Type type, String symbol, Double price, Double qty, Double equity, Long decisionId,

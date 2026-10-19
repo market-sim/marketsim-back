@@ -5,8 +5,10 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.stream.Collectors;
 
@@ -29,6 +31,7 @@ import tn.esprit.marketsim.agent.engine.TradingPolicy;
 import tn.esprit.marketsim.agent.engine.TradingPolicy.Contribution;
 import tn.esprit.marketsim.agent.engine.TradingPolicy.PolicyDecision;
 import tn.esprit.marketsim.common.NotFoundException;
+import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.market.Asset;
 import tn.esprit.marketsim.trading.TradeOrder;
 import tn.esprit.marketsim.trading.TradeOrderRepository;
@@ -44,6 +47,7 @@ public class DecisionService {
     private final AgentDecisionRepository repository;
     private final TradeOrderRepository orderRepository;
     private final AgentLabSupport support;
+    private final AuditLedger ledger;
 
     @Transactional
     public List<DecisionDto> decide(AgentConfig agent, User user) {
@@ -85,7 +89,9 @@ public class DecisionService {
         if (agent.isActive() && d.action() != AgentAction.HOLD) {
             decision.setOrderId(execute(decision, user).getId());
         }
-        return repository.save(decision);
+        AgentDecision saved = repository.save(decision);
+        audit(agent, user.getId(), saved, "MANUAL");
+        return saved;
     }
 
     /**
@@ -95,7 +101,37 @@ public class DecisionService {
     @Transactional
     public AgentDecision recordAutopilotDecision(AgentConfig agent, String symbol, double price, PolicyDecision d,
                                                  MarketFeatures features, AssetDynamics dynamics) {
-        return repository.save(build(agent, symbol, price, d, features, dynamics));
+        AgentDecision saved = repository.save(build(agent, symbol, price, d, features, dynamics));
+        // le pilote decide toutes les quelques secondes : seuls ses ordres sont figes (les HOLD feraient grossir la base sans fin)
+        if (saved.getAction() != AgentAction.HOLD) audit(agent, agent.getOwnerId(), saved, "AUTOPILOT");
+        return saved;
+    }
+
+    /** Fige la decision dans le registre d'audit (contenu complet : prix, confiance, explication SHAP...). */
+    private void audit(AgentConfig agent, Long ownerId, AgentDecision d, String source) {
+        Map<String, Object> p = support.auditContext(agent);
+        p.put("source", source);
+        p.put("symbol", d.getSymbol());
+        p.put("action", d.getAction().name());
+        p.put("price", d.getPrice());
+        p.put("quantity", d.getQuantity());
+        p.put("confidence", d.getConfidence());
+        p.put("score", d.getScore());
+        p.put("stopLoss", d.getStopLoss());
+        p.put("takeProfit", d.getTakeProfit());
+        p.put("explanation", d.getExplanation());
+        p.put("contributions", d.getContributions().stream().map(c -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("feature", c.getFeature());
+            m.put("value", c.getFeatureValue());
+            m.put("contribution", c.getContribution());
+            return m;
+        }).toList());
+        p.put("qValues", d.getQValues());
+        p.put("orderId", d.getOrderId());
+        ledger.record("DECISION", d.getId(), ownerId, agent.getId(),
+                String.format(Locale.FRANCE, "%s %s @ %.2f (confiance %.0f %%)", d.getAction(), d.getSymbol(), d.getPrice(),
+                        d.getConfidence() * 100), p);
     }
 
     /** Construit la decision (explication, taille, stop-loss / take-profit) sans l'enregistrer. */

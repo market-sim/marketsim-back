@@ -23,6 +23,30 @@ class ChartAnalysisServiceTest {
         assertTrue(props.containsKey("signal") && props.containsKey("summary"));
     }
 
+    private static ChartAnalysisService.ChartRequest request(String profile, Double percent, Double balance) {
+        return new ChartAnalysisService.ChartRequest("img", "image/png", null, null, profile, percent, balance);
+    }
+
+    @Test
+    void riskContextIsEmptyWithoutProfile() {
+        assertEquals("", ChartAnalysisService.riskContext(request(null, 1.0, 1000.0)));
+    }
+
+    @Test
+    void riskContextStatesProfileAndMaxLoss() {
+        String ctx = ChartAnalysisService.riskContext(request("CONSERVATIVE", 0.5, 1000.0));
+        assertTrue(ctx.contains("PRUDENT"));
+        assertTrue(ctx.contains("0.5 % du capital"));
+        assertTrue(ctx.contains("5.00 EUR"), "0,5 % de 1000 = 5 EUR de perte maximale : " + ctx);
+    }
+
+    @Test
+    void riskContextWorksWithProfileOnly() {
+        String ctx = ChartAnalysisService.riskContext(request("AGGRESSIVE", null, null));
+        assertTrue(ctx.contains("OFFENSIF"));
+        assertTrue(!ctx.contains("Risque maximum"));
+    }
+
     @Test
     void parsesModelAnswerIntoRecord() throws Exception {
         String answer = """

@@ -75,6 +75,16 @@ public class AgentConfig {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     private User owner;
 
+    /** Cle etrangere du proprietaire, lisible sans charger l'utilisateur (journal d'audit). */
+    @JsonIgnore
+    @Column(name = "owner_id", insertable = false, updatable = false)
+    private Long ownerId;
+
+    /** Proprietaire : la colonne lue en base, ou l'utilisateur fourni a la creation (agent pas encore recharge). */
+    public Long getOwnerId() {
+        return ownerId != null ? ownerId : owner != null ? owner.getId() : null;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now();

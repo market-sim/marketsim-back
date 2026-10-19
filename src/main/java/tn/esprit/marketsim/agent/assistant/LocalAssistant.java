@@ -350,8 +350,8 @@ public class LocalAssistant {
         return n + " " + (n > 1 ? plural : singular);
     }
 
-    static final Pattern POSITIVE = Pattern.compile("haussier|hausse|rebond|record|progress|gagne|bondit|grimpe|optimis|envol|sommet|soutien|accord|rallye|croissance");
-    static final Pattern NEGATIVE = Pattern.compile("baissier|baisse|chute|recul|krach|inquiet|crise|plonge|perte|recession|tension|menace|fraude|faillite|degringol|peur");
+    public static final Pattern POSITIVE = Pattern.compile("haussier|hausse|rebond|record|progress|gagne|bondit|grimpe|optimis|envol|sommet|soutien|accord|rallye|croissance");
+    public static final Pattern NEGATIVE = Pattern.compile("baissier|baisse|chute|recul|krach|inquiet|crise|plonge|perte|recession|tension|menace|fraude|faillite|degringol|peur");
 
     // =====================================================================================
     // Notions de finance (personnalisees avec les chiffres de l'utilisateur)

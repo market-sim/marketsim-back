@@ -27,6 +27,9 @@ Le frontend React est dans un autre repo : `marketsim-frontend`.
 > Pour changer : `server.port` dans `src/main/resources/application.properties`.
 > Si ton MySQL a un mot de passe, change `spring.datasource.password` (sans le commit !).
 
+> Détail du module 6 (Monte Carlo, RL, tournoi, walk-forward sur données réelles, registre d'audit) : [`docs/MODULE6_AGENT.md`](docs/MODULE6_AGENT.md).
+> Registre d'audit : définir la variable d'environnement `LEDGER_SECRET` en production (secret qui scelle les blocs).
+
 ### Compte admin créé automatiquement
 
 | Email | Mot de passe |
@@ -74,6 +77,8 @@ Toutes les routes (sauf `/api/auth/**`) demandent le header `Authorization: Bear
 | 5 | `GET /api/market/assets` (+ POST/PUT/DELETE réservés ADMIN) | Actifs / cotations |
 | 6 | `GET/POST /api/agents`, `PUT/DELETE /api/agents/{id}`, `PATCH /api/agents/{id}/toggle` | Agents IA |
 | 7 | `GET/POST /api/stress/scenarios`, `GET/PUT/DELETE .../{id}` | Scénarios de stress |
+| 6 | `GET /api/market-data/series?symbol=`, `POST /api/agents/{id}/walkforward` | Données réelles (Yahoo Finance) + backtest walk-forward |
+| 6 | `GET /api/ledger/summary`, `records`, `blocks`, `verify`, `POST /api/ledger/seal` | Registre d'audit des décisions de l'IA (hash chaînés + Merkle) |
 
 Test rapide (Postman ou curl) :
 

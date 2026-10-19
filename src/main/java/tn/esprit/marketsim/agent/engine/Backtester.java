@@ -33,7 +33,8 @@ public final class Backtester {
     }
 
     /** Detail jour par jour : evenement, position apres decision, action voulue et confiance de la politique. */
-    public record Trace(int[] events, int[] positions, AgentAction[] actions, double[] confidence) {
+    public record Trace(int[] events, int[] positions, AgentAction[] actions, double[] confidence,
+                        TradingPolicy.PolicyDecision[] decisions) {
     }
 
     /** Fraction du capital engagee par position selon l'appetit pour le risque. */
@@ -62,7 +63,8 @@ public final class Backtester {
         int days = prices.length - start;
         double[] equity = new double[days];
         Trace trace = record
-                ? new Trace(new int[days], new int[days], new AgentAction[days], new double[days])
+                ? new Trace(new int[days], new int[days], new AgentAction[days], new double[days],
+                        new TradingPolicy.PolicyDecision[days])
                 : null;
         double fraction = positionFraction(risk);
         double dailySigma = normalSigma / Math.sqrt(PathGenerator.TRADING_DAYS);
@@ -94,6 +96,7 @@ public final class Backtester {
                 if (record) {
                     trace.actions()[day] = decision.action();
                     trace.confidence()[day] = decision.confidence();
+                    trace.decisions()[day] = decision;
                 }
                 if (event == NONE) {
                     if (decision.action() == AgentAction.BUY && units == 0) {
