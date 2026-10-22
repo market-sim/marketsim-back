@@ -24,6 +24,19 @@ public final class AuthDtos {
     public record AuthResponse(String token, User user) {
     }
 
-    public record UpdateProfileRequest(@NotBlank String firstName, @NotBlank String lastName) {
+    /** Champs absents (null) : inchanges. Le mot de passe change seulement si les deux champs sont envoyes. */
+    public record UpdateProfileRequest(
+            String firstName,
+            String lastName,
+            String email,
+            String currentPassword,
+            String newPassword) {
+    }
+
+    /**
+     * Profil renvoye apres mise a jour : aucun mot de passe ni hash.
+     * token est renseigne seulement si l'email a change (le JWT contient l'email).
+     */
+    public record UserProfileResponse(Long id, String firstName, String lastName, String email, String token) {
     }
 }
