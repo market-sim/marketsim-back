@@ -1,5 +1,7 @@
 package tn.esprit.marketsim.config;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +15,9 @@ import tn.esprit.marketsim.education.Course;
 import tn.esprit.marketsim.education.CourseRepository;
 import tn.esprit.marketsim.market.Asset;
 import tn.esprit.marketsim.market.AssetRepository;
+import tn.esprit.marketsim.market.MarketNews;
+import tn.esprit.marketsim.market.MarketNewsRepository;
+import tn.esprit.marketsim.market.SentimentAnalyzer;
 import tn.esprit.marketsim.stress.StressScenario;
 import tn.esprit.marketsim.stress.StressScenarioRepository;
 import tn.esprit.marketsim.user.Role;
@@ -27,6 +32,7 @@ public class DataInitializer implements CommandLineRunner {
 
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
+    private final MarketNewsRepository marketNewsRepository;
     private final CourseRepository courseRepository;
     private final StressScenarioRepository scenarioRepository;
     private final PasswordEncoder passwordEncoder;
@@ -59,6 +65,28 @@ public class DataInitializer implements CommandLineRunner {
                     Asset.of("BTC/USD", "Bitcoin", Asset.Type.CRYPTO, "67240", 2.14),
                     Asset.of("GOLD", "Gold Spot", Asset.Type.COMMODITY, "2341.60", 0.54),
                     Asset.of("WTI", "Crude Oil WTI", Asset.Type.COMMODITY, "78.90", -1.12)));
+        }
+
+        if (marketNewsRepository.count() == 0) {
+            // Données de démonstration — sentiment calculé par SentimentAnalyzer
+            Instant now = Instant.now();
+            marketNewsRepository.saveAll(List.of(
+                    MarketNews.of(
+                            "Apple beats earnings expectations, raises full-year guidance",
+                            "Bloomberg", "https://bloomberg.com", "AAPL",
+                            now.minus(4, ChronoUnit.HOURS), 1.0, SentimentAnalyzer.Label.POSITIVE),
+                    MarketNews.of(
+                            "Bitcoin ETF inflows hit record on institutional demand surge",
+                            "Financial Times", "https://ft.com", "BTC/USD",
+                            now.minus(6, ChronoUnit.HOURS), 1.0, SentimentAnalyzer.Label.POSITIVE),
+                    MarketNews.of(
+                            "Oil inventories rise unexpectedly, prices under pressure",
+                            "Reuters", "https://reuters.com", "WTI",
+                            now.minus(5, ChronoUnit.HOURS), -1.0, SentimentAnalyzer.Label.NEGATIVE),
+                    MarketNews.of(
+                            "Fed signals pause in rate hikes as inflation cools",
+                            "CNBC", "https://cnbc.com", "EUR/USD",
+                            now.minus(2, ChronoUnit.HOURS), 0.0, SentimentAnalyzer.Label.NEUTRAL)));
         }
 
         if (courseRepository.count() == 0) {
