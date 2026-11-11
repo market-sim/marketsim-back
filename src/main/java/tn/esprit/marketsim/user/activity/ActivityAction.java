@@ -6,5 +6,6 @@ public enum ActivityAction {
     PROFILE_UPDATE,
     ADMIN_SET_ENABLED,
     ADMIN_DELETE_USER,
+    ADMIN_SET_ROLE,
     SETTINGS_UPDATE
 }

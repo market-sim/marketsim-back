@@ -42,8 +42,13 @@ public class ActivityLog {
 
     private Long targetUserId;
 
+    /**
+     * varchar et non ENUM SQL : sinon Hibernate cree une colonne ENUM dont la liste de valeurs
+     * est figee a la creation de la table, et une nouvelle action (ex. ADMIN_SET_ROLE) est
+     * refusee par les bases existantes (erreur 500, action non tracee).
+     */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 40)
+    @Column(nullable = false, length = 40, columnDefinition = "varchar(40)")
     private ActivityAction action;
 
     @Enumerated(EnumType.STRING)

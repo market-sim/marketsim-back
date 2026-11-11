@@ -14,4 +14,13 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long>,
 
     List<ActivityLog> findByActionAndActorIdIsNullAndOccurredAtBeforeOrderByOccurredAtDesc(
             ActivityAction action, Instant before, Pageable pageable);
+
+    long countByActorIdAndActionAndOutcomeAndOccurredAtLessThanEqual(
+            Long actorId, ActivityAction action, ActivityOutcome outcome, Instant asOf);
+
+    long countByActionAndOutcomeAndOccurredAtGreaterThanEqual(
+            ActivityAction action, ActivityOutcome outcome, Instant since);
+
+    long countByActionAndReasonCodeAndOccurredAtGreaterThanEqual(
+            ActivityAction action, String reasonCode, Instant since);
 }

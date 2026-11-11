@@ -23,6 +23,7 @@ public class GlobalUserSettingsService {
     private final GlobalUserSettingsRepository repository;
     private final ActivityLogService activityLogService;
 
+    /** La ligne est creee au demarrage par GlobalUserSettingsBootstrap, avant la premiere requete HTTP. */
     @Transactional
     public GlobalUserSettings getOrCreate() {
         return repository.findById(GlobalUserSettings.SINGLETON_ID)

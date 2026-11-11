@@ -1,5 +1,6 @@
 package tn.esprit.marketsim.user.anomaly;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,4 +15,9 @@ public interface LoginAnomalyAssessmentRepository
     List<LoginAnomalyAssessment> findByActorId(Long actorId);
 
     boolean existsByActorId(Long actorId);
+
+    long countByStatusAndOccurredAtGreaterThanEqual(LoginAnomalyStatus status, Instant since);
+
+    long countByStatusAndRiskLevelAndOccurredAtGreaterThanEqual(
+            LoginAnomalyStatus status, LoginRiskLevel riskLevel, Instant since);
 }

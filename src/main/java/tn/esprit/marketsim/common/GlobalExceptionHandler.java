@@ -38,6 +38,8 @@ public class GlobalExceptionHandler {
 
     private static final Pattern ADMIN_USER_ENABLED =
             Pattern.compile(".*/api/admin/users/([^/]+)/enabled/?$");
+    private static final Pattern ADMIN_USER_ROLE =
+            Pattern.compile(".*/api/admin/users/([^/]+)/role/?$");
     private static final Pattern ADMIN_USER_DELETE =
             Pattern.compile(".*/api/admin/users/([^/]+)/?$");
 
@@ -137,6 +139,14 @@ public class GlobalExceptionHandler {
         if ("PATCH".equals(method) && enabled.matches()) {
             activityLogService.recordImmediate(
                     actorId, parseTargetId(enabled.group(1)), ActivityAction.ADMIN_SET_ENABLED,
+                    ActivityOutcome.FAILURE, reasonCode, TraceDetails.empty());
+            return;
+        }
+
+        Matcher role = ADMIN_USER_ROLE.matcher(path);
+        if ("PATCH".equals(method) && role.matches()) {
+            activityLogService.recordImmediate(
+                    actorId, parseTargetId(role.group(1)), ActivityAction.ADMIN_SET_ROLE,
                     ActivityOutcome.FAILURE, reasonCode, TraceDetails.empty());
             return;
         }
