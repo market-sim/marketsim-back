@@ -18,6 +18,7 @@ import tn.esprit.marketsim.stress.StressScenarioRepository;
 import tn.esprit.marketsim.user.Role;
 import tn.esprit.marketsim.user.User;
 import tn.esprit.marketsim.user.UserRepository;
+import tn.esprit.marketsim.user.settings.GlobalUserSettingsService;
 
 /** Remplit la base avec un admin et quelques donnees de demo au premier lancement. */
 @Slf4j
@@ -30,6 +31,7 @@ public class DataInitializer implements CommandLineRunner {
     private final CourseRepository courseRepository;
     private final StressScenarioRepository scenarioRepository;
     private final PasswordEncoder passwordEncoder;
+    private final GlobalUserSettingsService settingsService;
 
     @Value("${app.admin.email}")
     private String adminEmail;
@@ -39,6 +41,8 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        settingsService.getOrCreate();
+
         if (!userRepository.existsByEmail(adminEmail)) {
             userRepository.save(User.builder()
                     .firstName("Admin")

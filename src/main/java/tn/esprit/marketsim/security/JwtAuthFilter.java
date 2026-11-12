@@ -32,11 +32,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             try {
                 String email = jwtService.extractEmail(header.substring(7));
-                userRepository.findByEmail(email).filter(User::isEnabled).ifPresent(user -> {
-                    var auth = new UsernamePasswordAuthenticationToken(
-                            user, null, List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                });
+                userRepository.findByEmail(email)
+                        .filter(User::isEnabled)
+                        .filter(u -> !u.isTemporarilyLocked())
+                        .ifPresent(user -> {
+                            var auth = new UsernamePasswordAuthenticationToken(
+                                    user, null, List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())));
+                            SecurityContextHolder.getContext().setAuthentication(auth);
+                        });
             } catch (Exception e) {
                 // token invalide ou expire : la requete continue sans authentification (=> 401)
             }

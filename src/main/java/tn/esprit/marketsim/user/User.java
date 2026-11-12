@@ -58,6 +58,13 @@ public class User {
 
     private boolean enabled;
 
+    /** Compteur d'echecs de connexion consecutifs (reinitialise apres un succes). */
+    @Builder.Default
+    private int failedLoginAttempts = 0;
+
+    /** Si non null et dans le futur, la connexion est refusee jusqu'a cette date. */
+    private LocalDateTime lockedUntil;
+
     private LocalDateTime createdAt;
 
     @PrePersist
@@ -66,5 +73,10 @@ public class User {
         if (role == null) role = Role.USER;
         if (level == null) level = UserLevel.DEBUTANT;
         if (virtualBalance == null) virtualBalance = new BigDecimal("100000");
+    }
+
+    @JsonIgnore
+    public boolean isTemporarilyLocked() {
+        return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
     }
 }
