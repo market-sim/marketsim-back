@@ -3,6 +3,7 @@ package tn.esprit.marketsim.trading;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
@@ -37,14 +38,19 @@ class TradeOrderServiceTest {
     private TradeOrderRepository repository;
     @Mock
     private PriceProvider prices;
+    @Mock
+    private TradingUserRepository accounts;
+    @Mock
+    private TradingAudit audit;
 
     private TradeOrderService service;
     private User alice;
 
     @BeforeEach
     void setUp() {
-        service = new TradeOrderService(repository, prices);
+        service = new TradeOrderService(repository, accounts, prices, new TradingProperties(), audit);
         alice = user(1L);
+        lenient().when(accounts.findByIdForUpdate(1L)).thenReturn(Optional.of(alice));
         lenient().when(repository.save(any(TradeOrder.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(prices.currentPrice("AAPL")).thenReturn(new BigDecimal("192.450000"));
     }
@@ -129,6 +135,111 @@ class TradeOrderServiceTest {
         when(repository.findByIdAndOwnerId(13L, 1L)).thenReturn(Optional.of(open));
         assertThrows(ConflictException.class, () -> service.cancel(13L, alice));
         verify(repository, never()).delete(any());
+    }
+
+    @Test
+    void longRoundTripBalanceChangeEqualsPnlMinusFees() {
+        BigDecimal before = alice.getVirtualBalance();
+        OrderResponse opened = service.create(market(Side.BUY, "10"), alice);
+        // debit = 1924.50 + frais 1.92 (0,1 %)
+        assertEquals(new BigDecimal("98073.58"), alice.getVirtualBalance());
+
+        TradeOrder ticket = captured(opened);
+        when(prices.currentPrice("AAPL")).thenReturn(new BigDecimal("200.000000"));
+        OrderResponse closed = service.close(ticket.getId(), alice);
+
+        assertEquals(Status.CLOSED, closed.status());
+        assertEquals(new BigDecimal("75.50"), closed.realizedPnl());                  // (200 - 192.45) x 10
+        assertEquals(new BigDecimal("3.92"), closed.fees());                         // 1.92 + 2.00
+        assertEquals(closed.realizedPnl().subtract(closed.fees()), alice.getVirtualBalance().subtract(before));
+        assertEquals(TradeOrder.CloseReason.MANUAL, closed.closeReason());
+    }
+
+    @Test
+    void shortRoundTripBalanceChangeEqualsPnlMinusFees() {
+        BigDecimal before = alice.getVirtualBalance();
+        OrderResponse opened = service.create(market(Side.SELL, "10"), alice);
+        assertEquals("SHORT", opened.positionType());
+        assertEquals(new BigDecimal("98073.58"), alice.getVirtualBalance(), "marge 100 % + frais bloques");
+
+        TradeOrder ticket = captured(opened);
+        when(prices.currentPrice("AAPL")).thenReturn(new BigDecimal("180.000000"));
+        OrderResponse closed = service.close(ticket.getId(), alice);
+
+        assertEquals(new BigDecimal("124.50"), closed.realizedPnl());                 // (192.45 - 180) x 10
+        assertEquals(closed.realizedPnl().subtract(closed.fees()), alice.getVirtualBalance().subtract(before));
+    }
+
+    @Test
+    void insufficientBalanceGivesRejectedTicketWithReason() {
+        alice.setVirtualBalance(new BigDecimal("1000"));
+        OrderResponse r = service.create(market(Side.BUY, "10"), alice);
+        assertEquals(Status.REJECTED, r.status());
+        assertTrue(r.rejectReason().startsWith("Solde insuffisant"));
+        assertEquals(new BigDecimal("1000"), alice.getVirtualBalance(), "solde intact");
+        verify(audit).record(org.mockito.ArgumentMatchers.eq("ORDER_REJECTED"), any(), any(), anyString());
+    }
+
+    @Test
+    void limitAlreadyTriggeredIsFilledImmediatelyAtObservedPrice() {
+        CreateOrderRequest limit = new CreateOrderRequest("AAPL", Side.BUY, OrderType.LIMIT, bd("1"), bd("195"), null, null);
+        OrderResponse r = service.create(limit, alice);
+        assertEquals(Status.OPEN, r.status());
+        assertEquals(new BigDecimal("192.450000"), r.executedPrice(), "prix observe, pas le niveau limite");
+    }
+
+    @Test
+    void limitNotTriggeredStaysPendingWithoutReservingBalance() {
+        CreateOrderRequest limit = new CreateOrderRequest("AAPL", Side.BUY, OrderType.LIMIT, bd("1"), bd("150"), null, null);
+        assertEquals(Status.PENDING, service.create(limit, alice).status());
+        assertEquals(new BigDecimal("100000"), alice.getVirtualBalance());
+    }
+
+    @Test
+    void closingTwiceIsAConflict() {
+        TradeOrder o = open(20L, alice, "100", null, null);
+        when(repository.findByIdAndOwnerId(20L, 1L)).thenReturn(Optional.of(o));
+        service.close(20L, alice);
+        assertThrows(ConflictException.class, () -> service.close(20L, alice));
+    }
+
+    @Test
+    void agentSellClosesOldestLongInsteadOfOpeningShort() {
+        TradeOrder longTicket = open(30L, alice, "190", null, null);
+        when(repository.findFirstByOwnerIdAndSymbolIgnoreCaseAndSideAndStatusOrderByIdAsc(1L, "AAPL", Side.BUY, Status.OPEN))
+                .thenReturn(Optional.of(longTicket));
+        TradeOrder r = service.placeForAgent(alice, 5L, "AAPL", Side.SELL, bd("10"), null, null);
+        assertEquals(30L, r.getId());
+        assertEquals(Status.CLOSED, r.getStatus());
+        assertEquals(TradeOrder.CloseReason.AGENT, r.getCloseReason());
+    }
+
+    @Test
+    void agentInvalidOrderBecomesRejectedTicketNotException() {
+        TradeOrder r = service.placeForAgent(alice, 5L, "AAPL", Side.BUY, bd("1"), bd("500"), null);
+        assertEquals(Status.REJECTED, r.getStatus());
+        assertTrue(r.getRejectReason().startsWith("Agent"));
+    }
+
+    @Test
+    void legacyTicketOnlyCreditsPnlOnClose() {
+        TradeOrder o = open(40L, alice, "100", null, null);
+        o.setLegacy(true);
+        when(repository.findByIdAndOwnerId(40L, 1L)).thenReturn(Optional.of(o));
+        when(prices.currentPrice("AAPL")).thenReturn(new BigDecimal("110"));
+        service.close(40L, alice);
+        // P&L 100 - frais de cloture 1.10 ; le principal (jamais debite) n'est pas restitue
+        assertEquals(new BigDecimal("100098.90"), alice.getVirtualBalance());
+    }
+
+    /** Le service enregistre le ticket via save() : on le rend retrouvable par id pour la cloture. */
+    private TradeOrder captured(OrderResponse r) {
+        org.mockito.ArgumentCaptor<TradeOrder> c = org.mockito.ArgumentCaptor.forClass(TradeOrder.class);
+        verify(repository, org.mockito.Mockito.atLeastOnce()).save(c.capture());
+        TradeOrder t = c.getValue();
+        t.setId(99L);
+        when(repository.findByIdAndOwnerId(99L, 1L)).thenReturn(Optional.of(t));
+        return t;
     }
 
     // ----- utilitaires -----

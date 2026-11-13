@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.trading.TradeOrder.Status;
 import tn.esprit.marketsim.trading.TradingDtos.CreateOrderRequest;
 import tn.esprit.marketsim.trading.TradingDtos.OrderResponse;
+import tn.esprit.marketsim.trading.TradingDtos.RejectedOrderResponse;
 import tn.esprit.marketsim.trading.TradingDtos.UpdateOrderRequest;
 import tn.esprit.marketsim.user.User;
 
@@ -46,9 +48,23 @@ public class TradeOrderController {
         return service.findOneDto(id, user);
     }
 
+    /**
+     * Le prix, le statut et le proprietaire ne sont jamais lus dans le corps. Ordre refuse (solde insuffisant,
+     * risque bloquant) : 400 avec le message et le ticket REJECTED enregistre.
+     */
     @PostMapping
-    public OrderResponse create(@Valid @RequestBody CreateOrderRequest request, @AuthenticationPrincipal User user) {
-        return service.create(request, user);
+    public ResponseEntity<?> create(@Valid @RequestBody CreateOrderRequest request, @AuthenticationPrincipal User user) {
+        OrderResponse order = service.create(request, user);
+        if (order.status() == Status.REJECTED) {
+            return ResponseEntity.badRequest().body(new RejectedOrderResponse(400, order.rejectReason(), order));
+        }
+        return ResponseEntity.ok(order);
+    }
+
+    /** Cloture d'une position OPEN au prix courant (closeReason = MANUAL). */
+    @PostMapping("/{id}/close")
+    public OrderResponse close(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return service.close(id, user);
     }
 
     /** Mise a jour partielle du stop-loss / take-profit uniquement. */

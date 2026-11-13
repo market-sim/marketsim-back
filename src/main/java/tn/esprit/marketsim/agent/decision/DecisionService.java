@@ -35,6 +35,7 @@ import tn.esprit.marketsim.ledger.AuditLedger;
 import tn.esprit.marketsim.market.Asset;
 import tn.esprit.marketsim.trading.TradeOrder;
 import tn.esprit.marketsim.trading.TradeOrderRepository;
+import tn.esprit.marketsim.trading.TradeOrderService;
 import tn.esprit.marketsim.user.User;
 
 /** Fait decider l'agent sur chacun de ses actifs, explique la decision et l'execute s'il est actif. */
@@ -46,6 +47,7 @@ public class DecisionService {
 
     private final AgentDecisionRepository repository;
     private final TradeOrderRepository orderRepository;
+    private final TradeOrderService tradingService;
     private final AgentLabSupport support;
     private final AuditLedger ledger;
 
@@ -87,7 +89,7 @@ public class DecisionService {
         AgentDecision decision = build(agent, asset.getSymbol(), price, d, features, dynamics);
 
         if (agent.isActive() && d.action() != AgentAction.HOLD) {
-            decision.setOrderId(execute(decision, user).getId());
+            decision.setOrderId(execute(decision, user, agent).getId());
         }
         AgentDecision saved = repository.save(decision);
         audit(agent, user.getId(), saved, "MANUAL");
@@ -190,18 +192,18 @@ public class DecisionService {
                         && o.getSymbol().equalsIgnoreCase(symbol));
     }
 
-    /** Integration module 2 : la decision devient un vrai ordre dans le portefeuille virtuel. */
-    private TradeOrder execute(AgentDecision decision, User user) {
-        TradeOrder order = new TradeOrder();
-        order.setSymbol(decision.getSymbol());
-        order.setSide(decision.getAction() == AgentAction.BUY ? TradeOrder.Side.BUY : TradeOrder.Side.SELL);
-        order.setOrderType(TradeOrder.OrderType.MARKET);
-        order.setQuantity(BigDecimal.valueOf(decision.getQuantity()));
-        order.setPrice(BigDecimal.valueOf(decision.getPrice()));
-        order.setStopLoss(BigDecimal.valueOf(decision.getStopLoss()));
-        order.setTakeProfit(BigDecimal.valueOf(decision.getTakeProfit()));
-        order.setOwner(user);
-        return orderRepository.save(order);
+    /**
+     * Integration module 2 : la decision devient un vrai ticket via le moteur de trading (prix serveur, frais,
+     * solde, risque). BUY → ticket LONG ; SELL → cloture du LONG ouvert le plus ancien sur ce symbole s'il existe,
+     * sinon ticket SHORT. Un ordre refuse renvoie un ticket REJECTED (pas d'exception) : la decision est tout de
+     * meme enregistree avec son id.
+     */
+    private TradeOrder execute(AgentDecision decision, User user, AgentConfig agent) {
+        return tradingService.placeForAgent(user, agent.getId(), decision.getSymbol(),
+                decision.getAction() == AgentAction.BUY ? TradeOrder.Side.BUY : TradeOrder.Side.SELL,
+                BigDecimal.valueOf(decision.getQuantity()),
+                decision.getStopLoss() == null ? null : BigDecimal.valueOf(decision.getStopLoss()),
+                decision.getTakeProfit() == null ? null : BigDecimal.valueOf(decision.getTakeProfit()));
     }
 
     /** Explication en francais a partir des 3 variables les plus influentes. */
