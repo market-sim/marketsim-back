@@ -23,6 +23,7 @@ import tn.esprit.marketsim.trading.TradeOrder.Side;
 import tn.esprit.marketsim.trading.TradeOrder.Status;
 import tn.esprit.marketsim.trading.TradingDtos.CreateOrderRequest;
 import tn.esprit.marketsim.trading.TradingDtos.OrderResponse;
+import tn.esprit.marketsim.trading.TradingDtos.RiskAssessment;
 import tn.esprit.marketsim.trading.TradingDtos.UpdateOrderRequest;
 import tn.esprit.marketsim.user.User;
 
@@ -48,6 +49,7 @@ public class TradeOrderService {
     private final TradingProperties props;
     private final TradingAudit audit;
     private final PortfolioService portfolio;
+    private final RiskService risk;
 
     // ===================== Lecture =====================
 
@@ -125,8 +127,17 @@ public class TradeOrderService {
         return order;
     }
 
-    /** Enregistre le ticket, puis l'execute s'il est au marche ou deja declenche. Compte deja verrouille. */
+    /**
+     * Controle de risque (regles dures → REJECTED), puis enregistrement et execution si l'ordre est au marche ou
+     * deja declenche. Compte deja verrouille.
+     */
     private TradeOrder submit(TradeOrder order, User account, Long agentId) {
+        RiskAssessment assessment = risk.assess(account, order.getSymbol(), order.getSide(), order.getQuantity(),
+                order.getPrice(), order.getStopLoss() != null);
+        if (assessment.blocked()) {
+            reject(order, "Risque bloquant (score " + assessment.score() + ") : " + assessment.blockingReasons(), agentId);
+            return order;
+        }
         TradeOrder saved = repository.save(order);
         audit.record("ORDER_PLACED", saved, agentId, title("Ordre", saved));
         BigDecimal market = prices.currentPrice(saved.getSymbol());

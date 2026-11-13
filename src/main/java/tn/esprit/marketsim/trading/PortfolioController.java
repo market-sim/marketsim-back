@@ -19,9 +19,11 @@ import tn.esprit.marketsim.user.User;
 public class PortfolioController {
 
     private final PortfolioService service;
+    private final OrderTriggerService triggers;
 
     @GetMapping
     public PortfolioResponse portfolio(@AuthenticationPrincipal User user) {
+        triggers.sweepUser(user.getId());
         return service.portfolio(user.getId());
     }
 

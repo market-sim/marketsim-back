@@ -26,21 +26,21 @@ public interface TradeOrderRepository extends JpaRepository<TradeOrder, Long> {
 
     /** Tickets a surveiller par le moteur : LIMIT/STOP en attente, ou positions ouvertes avec SL/TP. */
     @Query("""
-            select o.id from TradeOrder o
+            select o from TradeOrder o
             where o.status = tn.esprit.marketsim.trading.TradeOrder.Status.PENDING
                or (o.status = tn.esprit.marketsim.trading.TradeOrder.Status.OPEN
                    and (o.stopLoss is not null or o.takeProfit is not null))
             order by o.id""")
-    List<Long> findTriggerCandidateIds();
+    List<TradeOrder> findTriggerCandidates();
 
     @Query("""
-            select o.id from TradeOrder o
+            select o from TradeOrder o
             where o.owner.id = :ownerId
               and (o.status = tn.esprit.marketsim.trading.TradeOrder.Status.PENDING
                    or (o.status = tn.esprit.marketsim.trading.TradeOrder.Status.OPEN
                        and (o.stopLoss is not null or o.takeProfit is not null)))
             order by o.id""")
-    List<Long> findTriggerCandidateIdsByOwner(@Param("ownerId") Long ownerId);
+    List<TradeOrder> findTriggerCandidatesByOwner(@Param("ownerId") Long ownerId);
 
     /** Ticket le plus ancien d'un cote / symbole (cloture FIFO par l'agent). */
     Optional<TradeOrder> findFirstByOwnerIdAndSymbolIgnoreCaseAndSideAndStatusOrderByIdAsc(

@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,9 @@ import tn.esprit.marketsim.trading.TradeOrder.Side;
 import tn.esprit.marketsim.trading.TradeOrder.Status;
 import tn.esprit.marketsim.trading.TradingDtos.CreateOrderRequest;
 import tn.esprit.marketsim.trading.TradingDtos.OrderResponse;
+import tn.esprit.marketsim.trading.TradingDtos.RiskAssessment;
+import tn.esprit.marketsim.trading.TradingDtos.RiskCheck;
+import tn.esprit.marketsim.trading.TradingDtos.RiskLevel;
 import tn.esprit.marketsim.trading.TradingDtos.UpdateOrderRequest;
 import tn.esprit.marketsim.user.User;
 
@@ -44,15 +48,19 @@ class TradeOrderServiceTest {
     private TradingAudit audit;
     @Mock
     private PortfolioService portfolio;
+    @Mock
+    private RiskService risk;
 
     private TradeOrderService service;
     private User alice;
 
     @BeforeEach
     void setUp() {
-        service = new TradeOrderService(repository, accounts, prices, new TradingProperties(), audit, portfolio);
+        service = new TradeOrderService(repository, accounts, prices, new TradingProperties(), audit, portfolio, risk);
         alice = user(1L);
         lenient().when(accounts.findByIdForUpdate(1L)).thenReturn(Optional.of(alice));
+        lenient().when(risk.assess(any(User.class), anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(new RiskAssessment(10, RiskLevel.LOW, List.of(), null, null));
         lenient().when(repository.save(any(TradeOrder.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(prices.currentPrice("AAPL")).thenReturn(new BigDecimal("192.450000"));
     }
@@ -242,6 +250,19 @@ class TradeOrderServiceTest {
         t.setId(99L);
         when(repository.findByIdAndOwnerId(99L, 1L)).thenReturn(Optional.of(t));
         return t;
+    }
+
+    @Test
+    void blockedRiskRejectsOrderBeforeAnyBalanceMovement() {
+        RiskCheck failed = new RiskCheck("MAX_POSITION_SIZE", false, true, bd("38.49"), bd("25"),
+                "Taille de l'ordre 38,49 % de l'equity (max 25 %)");
+        when(risk.assess(any(User.class), anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(new RiskAssessment(80, RiskLevel.BLOCKED, List.of(failed), null, null));
+        OrderResponse r = service.create(market(Side.BUY, "200"), alice);
+        assertEquals(Status.REJECTED, r.status());
+        assertTrue(r.rejectReason().contains("Risque bloquant"));
+        assertEquals(new BigDecimal("100000"), alice.getVirtualBalance());
+        verify(repository).save(any(TradeOrder.class));              // ticket REJECTED conserve pour l'historique
     }
 
     // ----- utilitaires -----

@@ -32,6 +32,7 @@ import tn.esprit.marketsim.user.User;
 public class TradeOrderController {
 
     private final TradeOrderService service;
+    private final OrderTriggerService triggers;
 
     /** Toujours un tableau (compatible avec le front), filtres optionnels. */
     @GetMapping
@@ -40,6 +41,7 @@ public class TradeOrderController {
                                     @RequestParam(required = false) String symbol,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        triggers.sweepUser(user.getId());       // SL/TP/LIMIT declenches depuis le dernier balayage
         return service.findMine(user, status, symbol, from, to);
     }
 

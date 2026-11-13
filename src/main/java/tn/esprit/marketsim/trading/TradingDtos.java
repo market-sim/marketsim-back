@@ -108,4 +108,61 @@ public final class TradingDtos {
     /** Point de la courbe d'equity. */
     public record EquityPoint(LocalDateTime at, BigDecimal equity, BigDecimal cash, String event) {
     }
+
+    // ===================== Risque =====================
+
+    /** Simulation a blanc d'un ordre (POST /api/trading/risk/assess) : rien n'est cree. */
+    public record RiskAssessRequest(
+            @NotBlank @Size(max = 32) String symbol,
+            @NotNull Side side,
+            OrderType orderType,
+            @NotNull @Positive @Digits(integer = 13, fraction = 6) BigDecimal quantity,
+            @Positive @Digits(integer = 13, fraction = 6) BigDecimal limitPrice,
+            @Positive @Digits(integer = 13, fraction = 6) BigDecimal stopLoss) {
+    }
+
+    public enum RiskLevel { LOW, MEDIUM, HIGH, BLOCKED }
+
+    /**
+     * Controle individuel. {@code blocking=true} : regle dure (echec → ordre refuse) ; {@code false} : simple
+     * avertissement.
+     */
+    public record RiskCheck(String name, boolean passed, boolean blocking, BigDecimal value, BigDecimal limit,
+                            String message) {
+    }
+
+    public record RiskMetrics(BigDecimal referencePrice, BigDecimal notional, BigDecimal fee, BigDecimal equity,
+                              BigDecimal orderPctOfEquity, BigDecimal concentrationAfterPct,
+                              BigDecimal grossExposureAfterPct, BigDecimal cashAfter, BigDecimal cashAfterPct,
+                              BigDecimal volatilityAnnualPct, String volatilitySource, BigDecimal var95) {
+    }
+
+    /** Composantes normalisees (0-1) du score, pour l'explication. */
+    public record RiskComponents(double concentration, double orderSize, double volatility, double grossExposure,
+                                 double liquidity) {
+    }
+
+    public record RiskAssessment(int score, RiskLevel level, java.util.List<RiskCheck> checks, RiskMetrics metrics,
+                                 RiskComponents components) {
+
+        public boolean blocked() {
+            return level == RiskLevel.BLOCKED;
+        }
+
+        /** Messages des regles dures en echec. */
+        public String blockingReasons() {
+            return checks.stream().filter(c -> c.blocking() && !c.passed()).map(RiskCheck::message)
+                    .collect(java.util.stream.Collectors.joining(" ; "));
+        }
+    }
+
+    /** Risque du portefeuille (GET /api/trading/risk/portfolio). Montants en devise, horizon 1 jour. */
+    public record PortfolioRiskResponse(BigDecimal equity, BigDecimal var95, BigDecimal var99, BigDecimal cvar95,
+                                        BigDecimal var95Pct, String varMethod, int observations,
+                                        BigDecimal grossExposure, BigDecimal netExposure,
+                                        BigDecimal grossExposurePct, BigDecimal netExposurePct,
+                                        BigDecimal hhi, BigDecimal diversificationScore,
+                                        BigDecimal maxDrawdownPct, BigDecimal currentDrawdownPct,
+                                        int positions, String assumptions) {
+    }
 }
