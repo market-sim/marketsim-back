@@ -124,6 +124,7 @@ public class TradeOrderService {
         order.setFees(Money.zero());
         order.setLegacy(false);
         order.setStatus(Status.PENDING);          // statut initial decide par le serveur
+        order.setSource(TradeOrder.Source.USER);
         return order;
     }
 
@@ -266,6 +267,7 @@ public class TradeOrderService {
         try {
             if (qty.signum() <= 0) throw new IllegalArgumentException("Quantité nulle après arrondi");
             order = prepare(account, symbol, side, OrderType.MARKET, qty, null, stopLoss, takeProfit);
+            order.setSource(TradeOrder.Source.AGENT);
         } catch (IllegalArgumentException e) {
             return rejectedForAgent(account, agentId, symbol, side, qty, e.getMessage());
         }
@@ -289,6 +291,7 @@ public class TradeOrderService {
         o.setFees(Money.zero());
         o.setLegacy(false);
         o.setStatus(Status.PENDING);
+        o.setSource(TradeOrder.Source.AGENT);
         reject(o, "Agent : " + reason, agentId);
         return o;
     }

@@ -49,6 +49,9 @@ public class TradeOrder {
 
     public enum CloseReason { MANUAL, STOP_LOSS, TAKE_PROFIT, AGENT }
 
+    /** Origine du ticket : utilisateur ou agent IA (module 6). */
+    public enum Source { USER, AGENT }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -121,6 +124,12 @@ public class TradeOrder {
      * P&L (moins les frais) est credite, pas le principal.
      */
     private Boolean legacy;
+
+    /** Qui a passe l'ordre (null pour les tickets anterieurs = USER). */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 10)
+    private Source source;
 
     /** Verrou optimiste : empeche deux executions / clotures concurrentes du meme ticket. */
     @Version

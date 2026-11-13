@@ -72,6 +72,7 @@ class TradeOrderServiceTest {
         assertEquals(new BigDecimal("192.450000"), r.executedPrice());
         assertEquals(new BigDecimal("192.450000"), r.price());
         assertEquals(Status.OPEN, r.status());
+        assertEquals(TradeOrder.Source.USER, r.source());
     }
 
     @Test
@@ -229,6 +230,8 @@ class TradeOrderServiceTest {
         TradeOrder r = service.placeForAgent(alice, 5L, "AAPL", Side.BUY, bd("1"), bd("500"), null);
         assertEquals(Status.REJECTED, r.getStatus());
         assertTrue(r.getRejectReason().startsWith("Agent"));
+        assertEquals(TradeOrder.Source.AGENT, r.getSource());
+        assertEquals(TradeOrder.Source.AGENT, OrderResponse.of(r, null).source());
     }
 
     @Test

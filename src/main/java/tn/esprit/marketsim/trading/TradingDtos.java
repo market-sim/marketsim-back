@@ -70,7 +70,7 @@ public final class TradingDtos {
             BigDecimal price, BigDecimal limitPrice, BigDecimal stopLoss, BigDecimal takeProfit, Status status,
             LocalDateTime createdAt, BigDecimal executedPrice, LocalDateTime executedAt, LocalDateTime closedAt,
             BigDecimal closePrice, CloseReason closeReason, BigDecimal realizedPnl, BigDecimal fees,
-            String rejectReason, BigDecimal currentPrice, BigDecimal unrealizedPnl) {
+            String rejectReason, BigDecimal currentPrice, BigDecimal unrealizedPnl, TradeOrder.Source source) {
 
         public static OrderResponse of(TradeOrder o, BigDecimal currentPrice) {
             boolean open = o.getStatus() == Status.OPEN;
@@ -82,7 +82,8 @@ public final class TradingDtos {
                     o.getSide() == Side.BUY ? "LONG" : "SHORT", o.getOrderType(), o.getQuantity(), o.getPrice(),
                     o.getLimitPrice(), o.getStopLoss(), o.getTakeProfit(), o.getStatus(), o.getCreatedAt(),
                     o.getExecutedPrice(), o.getExecutedAt(), o.getClosedAt(), o.getClosePrice(), o.getCloseReason(),
-                    o.getRealizedPnl(), o.getFees(), o.getRejectReason(), mark, unrealized);
+                    o.getRealizedPnl(), o.getFees(), o.getRejectReason(), mark, unrealized,
+                    o.getSource() == null ? TradeOrder.Source.USER : o.getSource());
         }
     }
 
