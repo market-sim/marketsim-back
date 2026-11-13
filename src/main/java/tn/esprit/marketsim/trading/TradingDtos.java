@@ -89,4 +89,23 @@ public final class TradingDtos {
     /** Reponse 400 d'un ordre refuse : le ticket REJECTED est tout de meme enregistre (historique, audit). */
     public record RejectedOrderResponse(int status, String message, OrderResponse order) {
     }
+
+    // ===================== Portefeuille =====================
+
+    /** Position agregee par symbole (voir {@link PortfolioCalculator} pour les definitions). */
+    public record PositionDto(String symbol, BigDecimal netQuantity, BigDecimal longQuantity, BigDecimal shortQuantity,
+                              BigDecimal avgEntryPrice, BigDecimal marketPrice, BigDecimal marketValue,
+                              BigDecimal grossExposure, BigDecimal unrealizedPnl, BigDecimal weightPct, int tickets) {
+    }
+
+    public record PortfolioResponse(BigDecimal cash, BigDecimal equity, BigDecimal investedValue,
+                                    BigDecimal grossExposure, BigDecimal netExposure, BigDecimal unrealizedPnl,
+                                    BigDecimal realizedPnl, BigDecimal totalFees, BigDecimal totalReturnPct,
+                                    BigDecimal initialCapital, int openPositions, int pendingOrders,
+                                    java.util.List<PositionDto> positions) {
+    }
+
+    /** Point de la courbe d'equity. */
+    public record EquityPoint(LocalDateTime at, BigDecimal equity, BigDecimal cash, String event) {
+    }
 }

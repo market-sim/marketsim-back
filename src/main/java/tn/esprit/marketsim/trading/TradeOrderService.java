@@ -47,6 +47,7 @@ public class TradeOrderService {
     private final PriceProvider prices;
     private final TradingProperties props;
     private final TradingAudit audit;
+    private final PortfolioService portfolio;
 
     // ===================== Lecture =====================
 
@@ -155,6 +156,7 @@ public class TradeOrderService {
         order.setExecutedAt(LocalDateTime.now());
         order.setFees(TradeAccounting.fee(order.getQuantity(), price, props.getFeeRate()));
         audit.record("ORDER_FILLED", order, agentId, title("Exécution", order));
+        portfolio.recordSnapshot(account, "ORDER_FILLED");
     }
 
     void reject(TradeOrder order, String reason, Long agentId) {
@@ -188,6 +190,7 @@ public class TradeOrderService {
         order.setRealizedPnl(c.pnl());
         order.setFees(Money.orZero(order.getFees()).add(c.closeFee()));
         audit.record("ORDER_CLOSED", order, agentId, title("Clôture " + reason, order) + " P&L " + c.pnl().toPlainString());
+        portfolio.recordSnapshot(account, "ORDER_CLOSED");
     }
 
     // ===================== Mise a jour des protections =====================

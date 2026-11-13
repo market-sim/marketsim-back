@@ -42,13 +42,15 @@ class TradeOrderServiceTest {
     private TradingUserRepository accounts;
     @Mock
     private TradingAudit audit;
+    @Mock
+    private PortfolioService portfolio;
 
     private TradeOrderService service;
     private User alice;
 
     @BeforeEach
     void setUp() {
-        service = new TradeOrderService(repository, accounts, prices, new TradingProperties(), audit);
+        service = new TradeOrderService(repository, accounts, prices, new TradingProperties(), audit, portfolio);
         alice = user(1L);
         lenient().when(accounts.findByIdForUpdate(1L)).thenReturn(Optional.of(alice));
         lenient().when(repository.save(any(TradeOrder.class))).thenAnswer(inv -> inv.getArgument(0));
