@@ -47,6 +47,7 @@ public class TradeOrderController {
 
     @GetMapping("/{id}")
     public OrderResponse get(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        triggers.sweepUser(user.getId());
         return service.findOneDto(id, user);
     }
 

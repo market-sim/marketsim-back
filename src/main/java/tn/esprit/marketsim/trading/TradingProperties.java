@@ -50,5 +50,7 @@ public class TradingProperties {
         private long intervalMs = 2000;
         /** Desactive le balayage planifie (le balayage a la demande reste actif). */
         private boolean enabled = true;
+        /** Delai avant le premier balayage (ms). */
+        private long initialDelayMs = 10000;
     }
 }

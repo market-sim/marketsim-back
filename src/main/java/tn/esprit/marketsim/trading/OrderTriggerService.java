@@ -4,19 +4,24 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Moteur de declenchement : execute les LIMIT / STOP en attente et les SL / TP des positions ouvertes.
  * <ul>
- *   <li>Balayage planifie toutes les {@code trading.engine.interval-ms} (2 s par defaut ; {@code @EnableScheduling}
- *       est deja active par AutopilotScheduler).</li>
+ *   <li>Balayage planifie toutes les {@code trading.engine.interval-ms} (2 s par defaut) sur un thread DEDIE :
+ *       le planificateur Spring partage n'a qu'un thread, que d'autres modules bloquent par des appels reseau
+ *       (ex. NewsTvService) ; un {@code @Scheduled} ne garantirait donc pas le declenchement des stop-loss.</li>
  *   <li>Balayage a la demande d'un utilisateur dans GET /orders et GET /portfolio, pour que les declenchements
  *       soient visibles meme si les prix ont change ailleurs entre deux balayages.</li>
  * </ul>
@@ -34,7 +39,30 @@ public class OrderTriggerService {
     private final PriceProvider prices;
     private final TradingProperties props;
 
-    @Scheduled(fixedDelayString = "${trading.engine.interval-ms:2000}", initialDelayString = "${trading.engine.initial-delay-ms:10000}")
+    private ScheduledExecutorService executor;
+
+    @PostConstruct
+    void start() {
+        if (!props.getEngine().isEnabled()) {
+            log.info("Moteur de trading planifie desactive (trading.engine.enabled=false)");
+            return;
+        }
+        executor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "trading-engine");
+            t.setDaemon(true);
+            return t;
+        });
+        long interval = Math.max(200, props.getEngine().getIntervalMs());
+        executor.scheduleWithFixedDelay(this::scheduledSweep, props.getEngine().getInitialDelayMs(), interval,
+                TimeUnit.MILLISECONDS);
+        log.info("Moteur de trading demarre (balayage toutes les {} ms)", interval);
+    }
+
+    @PreDestroy
+    void stop() {
+        if (executor != null) executor.shutdownNow();
+    }
+
     public void scheduledSweep() {
         if (!props.getEngine().isEnabled()) return;
         try {
