@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class VersionController {
 
-    public static final int API_LEVEL = 8;
+    public static final int API_LEVEL = 9;
 
     @GetMapping("/api/public/version")
     public Map<String, Integer> version() {

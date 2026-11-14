@@ -14,7 +14,7 @@ import tn.esprit.marketsim.agent.portfolio.PortfolioService.PortfolioRequest;
 import tn.esprit.marketsim.agent.portfolio.PortfolioService.PortfolioResult;
 import tn.esprit.marketsim.user.User;
 
-@RestController
+@RestController("agentPortfolioController")
 @RequestMapping("/api/agents")
 @RequiredArgsConstructor
 public class PortfolioController {

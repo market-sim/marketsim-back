@@ -32,7 +32,7 @@ import tn.esprit.marketsim.market.Asset;
  * du capital (poids). On mesure le rendement global, la baisse maximale et l'effet de la diversification
  * (correlation moyenne entre actifs) par rapport a un seul actif.
  */
-@Service
+@Service("agentPortfolioService")
 @RequiredArgsConstructor
 public class PortfolioService {
 
