@@ -20,7 +20,6 @@ import tn.esprit.marketsim.user.dto.AuthDtos.UserProfileResponse;
 @RequiredArgsConstructor
 public class UserService {
 
-    private static final int MIN_PASSWORD_LENGTH = 6;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -73,9 +72,10 @@ public class UserService {
                 failProfile(userId, userId, "PASSWORD_FIELDS_REQUIRED");
                 throw new IllegalArgumentException("Le mot de passe actuel et le nouveau mot de passe sont requis");
             }
-            if (newPassword.length() < MIN_PASSWORD_LENGTH) {
-                failProfile(userId, userId, "PASSWORD_TOO_SHORT");
-                throw new IllegalArgumentException("6 caracteres minimum");
+            String weak = PasswordPolicy.problem(newPassword);
+            if (weak != null) {
+                failProfile(userId, userId, "PASSWORD_TOO_WEAK");
+                throw new IllegalArgumentException(weak);
             }
             if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
                 failProfile(userId, userId, "INVALID_CURRENT_PASSWORD");
@@ -97,7 +97,8 @@ public class UserService {
                 .passwordChanged(passwordChanged);
         activityLogService.recordAfterCommit(userId, userId, ActivityAction.PROFILE_UPDATE, "OK", details);
 
-        String token = previousEmail.equals(user.getEmail()) ? null : jwtService.generateToken(user);
+        String token = previousEmail.equals(user.getEmail()) ? null : jwtService.generateToken(user,
+                tn.esprit.marketsim.user.account.SessionService.currentSessionId());
         return new UserProfileResponse(user.getId(), user.getFirstName(), user.getLastName(), user.getEmail(), token);
     }
 

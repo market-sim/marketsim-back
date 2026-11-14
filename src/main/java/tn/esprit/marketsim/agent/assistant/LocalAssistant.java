@@ -43,6 +43,25 @@ public class LocalAssistant {
     private final NewsService news;
 
     public Answer answer(String question, Snapshot s) {
+        Answer a = answerFor(question, s);
+        return new Answer(a.text() + levelNote(s), a.sources(), a.newsUsed());
+    }
+
+    /**
+     * Reponse adaptee au niveau du joueur (systeme de progression) : un debutant recoit une aide en plus,
+     * les niveaux avances une reponse sans vulgarisation.
+     */
+    static String levelNote(Snapshot s) {
+        if (s == null || s.level() == null) return "";
+        return switch (s.level()) {
+            case "DEBUTANT" -> "\n\nNiveau Débutant : si un mot te paraît compliqué, demande-moi par exemple « c'est quoi le stop-loss ? »."
+                    + " Entraîne-toi dans le Jeu de trading (onglet Replay vs Agent) : le pilote automatique se débloque au niveau Intermédiaire.";
+            case "INTERMEDIAIRE" -> "\n\nAstuce Intermédiaire : compare toujours ton agent au simple « acheter et garder » avant de lui confier ton portefeuille.";
+            default -> "";
+        };
+    }
+
+    private Answer answerFor(String question, Snapshot s) {
         String q = normalize(question);
 
         String concept = detectConcept(q);

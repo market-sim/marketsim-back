@@ -18,6 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.common.ConflictException;
+import tn.esprit.marketsim.progression.WalletService;
+import tn.esprit.marketsim.user.Role;
+import tn.esprit.marketsim.user.UserLevel;
+import tn.esprit.marketsim.user.UserRepository;
 import tn.esprit.marketsim.agent.AgentAction;
 import tn.esprit.marketsim.agent.AgentConfig;
 import tn.esprit.marketsim.agent.AgentLabSupport;
@@ -67,6 +72,9 @@ public class AutopilotService {
     private final DecisionService decisionService;
     private final AnomalyService anomalyService;
     private final AuditLedger ledger;
+    private final WalletService wallet;
+    private final tn.esprit.marketsim.notification.NotificationService notifications;
+    private final UserRepository userRepository;
 
     // =================================================================================== API
 
@@ -102,6 +110,24 @@ public class AutopilotService {
             halt(old, Type.STOPPED, "Remplacée par une nouvelle session.");
         }
 
+        // Le pilote joue avec l'argent du portefeuille du jeu : il se debloque au niveau Intermediaire
+        // (l'administrateur garde un capital de demonstration, sans portefeuille).
+        Long ownerId = agent.getOwnerId();
+        boolean fromWallet = ownerId != null && userRepository.findById(ownerId)
+                .map(u -> u.getRole() != Role.ADMIN).orElse(false);
+        double capital = req.capital() == null || req.capital() <= 0 ? 10_000 : req.capital();
+        if (fromWallet) {
+            if (wallet.level(ownerId) == UserLevel.DEBUTANT) {
+                throw new ConflictException("Le pilote automatique se débloque au niveau Intermédiaire : "
+                        + "progresse d'abord dans le Jeu de trading (onglet Replay vs Agent).");
+            }
+            double balance = wallet.balance(ownerId);
+            capital = req.capital() == null || req.capital() <= 0 ? balance : Math.min(req.capital(), balance);
+            if (capital < 100) {
+                throw new ConflictException("Il faut au moins 100 $ dans ton portefeuille pour lancer le pilote automatique.");
+            }
+        }
+
         AutopilotSession s = new AutopilotSession();
         s.setAgent(agent);
         s.setStatus(AutopilotSession.Status.RUNNING);
@@ -109,8 +135,9 @@ public class AutopilotService {
         s.setMaxOrdersPerDay(req.maxOrdersPerDay() == null ? 10 : req.maxOrdersPerDay());
         s.setMaxLossPct(req.maxLossPct() == null ? 10 : Math.max(1, Math.min(90, req.maxLossPct())));
         s.setKillSwitch(req.killSwitch() == null || req.killSwitch());
-        double capital = req.capital() == null || req.capital() <= 0 ? 10_000 : req.capital();
         s.setCapital(capital);
+        s.setWalletFunded(fromWallet);
+        s.setWalletSettled(false);
         s.setCash(capital);
         s.setPeakEquity(capital);
         s.setEquityCsv("100");
@@ -118,6 +145,7 @@ public class AutopilotService {
         s.setOrdersDay(LocalDate.now());
         s.setNextRunAt(LocalDateTime.now());
         sessionRepository.save(s);
+        if (fromWallet) wallet.debit(ownerId, capital);
 
         // marche simule : 150 jours d'historique termines au prix actuel de l'actif
         SplittableRandom rng = new SplittableRandom(ThreadLocalRandom.current().nextLong());
@@ -363,7 +391,15 @@ public class AutopilotService {
 
     private void halt(AutopilotSession s, Type type, String reason) {
         s.setStatus(AutopilotSession.Status.STOPPED);
+        double returned = settleWallet(s);
+        if (returned >= 0) {
+            reason = String.format(Locale.FRANCE, "%s %,.2f $ reversés dans ton portefeuille.", reason, returned);
+        }
         s.setStopReason(reason);
+        if (s.getAgent() != null) {
+            notifications.notify(s.getAgent().getOwnerId(), tn.esprit.marketsim.notification.Notification.Type.AUTOPILOT,
+                    "Pilote automatique arrêté · " + s.getAgent().getName(), reason, "/agent");
+        }
         event(s, type, null, null, null, lastEquity(s), null, reason);
         auditHalt(s, type, reason);
     }
@@ -405,6 +441,15 @@ public class AutopilotService {
 
     private static double equity(AutopilotSession s, List<AutopilotAsset> assets) {
         return s.getCash() + assets.stream().mapToDouble(a -> a.getUnits() * last(a)).sum();
+    }
+
+    /** Rend au portefeuille la valeur actuelle du pilote (une seule fois) ; -1 si la session n'etait pas financee. */
+    private double settleWallet(AutopilotSession s) {
+        if (!Boolean.TRUE.equals(s.getWalletFunded()) || Boolean.TRUE.equals(s.getWalletSettled())) return -1;
+        double value = Math.max(0, s.getCapital() * lastEquity(s) / 100);
+        wallet.credit(s.getAgent().getOwnerId(), value);
+        s.setWalletSettled(true);
+        return value;
     }
 
     private static double lastEquity(AutopilotSession s) {

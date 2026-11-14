@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.agent.realdata.MarketSeriesRepository;
+import tn.esprit.marketsim.agent.realdata.PriceSeries;
 import tn.esprit.marketsim.agent.AgentAction;
 import tn.esprit.marketsim.agent.AgentConfig;
 import tn.esprit.marketsim.agent.AgentLabSupport;
@@ -48,6 +50,8 @@ public class DecisionService {
     private final TradeOrderRepository orderRepository;
     private final AgentLabSupport support;
     private final AuditLedger ledger;
+    /** Historiques reels deja telecharges ou importes (onglet Donnees reelles). */
+    private final MarketSeriesRepository seriesRepository;
 
     @Transactional
     public List<DecisionDto> decide(AgentConfig agent, User user) {
@@ -171,11 +175,35 @@ public class DecisionService {
     }
 
     /**
-     * Historique recent simule (le module 5 ne fournit qu'un prix courant) : trajectoire GBM
-     * de 120 jours qui se termine exactement au prix actuel. Chaque analyse tire un nouvel etat du marche.
-     * TODO : remplacer par l'historique reel des cotations quand le module 5 le stockera.
+     * Historique recent de l'actif : les 120 derniers jours REELS si l'historique a ete telecharge ou importe
+     * (onglet Donnees reelles), ramenes au prix actuel ; sinon une trajectoire simulee qui se termine au prix actuel.
      */
     private double[] recentHistory(Asset asset, AssetDynamics dynamics, double price) {
+        double[] real = realHistory(asset.getSymbol(), price);
+        if (real != null) return real;
+        return simulatedHistory(asset, dynamics, price);
+    }
+
+    /** Les HISTORY_DAYS + 1 dernieres clotures reelles, mises a l'echelle du prix courant ; null si indisponible. */
+    double[] realHistory(String symbol, double price) {
+        try {
+            return seriesRepository.findBySymbol(symbol)
+                    .map(row -> PriceSeries.decode(row.getSymbol(), row.getSource(), row.getData()).closes())
+                    .filter(c -> c.length > HISTORY_DAYS && c[c.length - 1] > 0)
+                    .map(c -> {
+                        double[] out = java.util.Arrays.copyOfRange(c, c.length - HISTORY_DAYS - 1, c.length);
+                        double scale = price / out[out.length - 1];
+                        for (int i = 0; i < out.length; i++) out[i] *= scale;
+                        return out;
+                    })
+                    .orElse(null);
+        } catch (RuntimeException e) {
+            return null; // historique illisible : on retombe sur la simulation
+        }
+    }
+
+    /** Trajectoire simulee (GBM) de 120 jours terminee au prix actuel, quand aucun historique reel n'est disponible. */
+    private double[] simulatedHistory(Asset asset, AssetDynamics dynamics, double price) {
         long seed = asset.getSymbol().hashCode() * 1_000_003L ^ java.util.concurrent.ThreadLocalRandom.current().nextLong();
         double[] path = PathGenerator.generate(1.0, HISTORY_DAYS, dynamics, PriceModel.GBM, new SplittableRandom(seed));
         double scale = price / path[HISTORY_DAYS];

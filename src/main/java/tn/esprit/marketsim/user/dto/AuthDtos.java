@@ -21,7 +21,15 @@ public final class AuthDtos {
     public record LoginRequest(@NotBlank @Email String email, @NotBlank String password) {
     }
 
-    public record AuthResponse(String token, User user) {
+    /**
+     * Reponse de connexion. Si la double authentification est active, token et user sont vides,
+     * twoFactorRequired vaut vrai et challenge doit etre renvoye avec le code a 6 chiffres.
+     */
+    public record AuthResponse(String token, User user, boolean twoFactorRequired, String challenge) {
+
+        public AuthResponse(String token, User user) {
+            this(token, user, false, null);
+        }
     }
 
     /** Champs absents (null) : inchanges. Le mot de passe change seulement si les deux champs sont envoyes. */

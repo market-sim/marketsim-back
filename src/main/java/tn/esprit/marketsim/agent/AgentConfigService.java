@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.progression.WalletService;
 import tn.esprit.marketsim.agent.autopilot.AutopilotAssetRepository;
 import tn.esprit.marketsim.agent.autopilot.AutopilotEventRepository;
 import tn.esprit.marketsim.agent.autopilot.AutopilotSessionRepository;
@@ -24,6 +25,7 @@ public class AgentConfigService {
     private final AutopilotSessionRepository autopilotSessionRepository;
     private final AutopilotAssetRepository autopilotAssetRepository;
     private final AutopilotEventRepository autopilotEventRepository;
+    private final WalletService walletService;
 
     public List<AgentConfig> findMine(User user) {
         return repository.findByOwnerId(user.getId());
@@ -67,6 +69,14 @@ public class AgentConfigService {
     public void delete(Long id, User user) {
         AgentConfig agent = findOne(id, user);
         autopilotSessionRepository.findByAgentId(agent.getId()).forEach(session -> {
+            // un pilote finance par le portefeuille et encore actif : on rend son argent avant de supprimer
+            if (Boolean.TRUE.equals(session.getWalletFunded()) && !Boolean.TRUE.equals(session.getWalletSettled())
+                    && session.getEquityCsv() != null && !session.getEquityCsv().isBlank()) {
+                String[] eq = session.getEquityCsv().split(",");
+                double pct = Double.parseDouble(eq[eq.length - 1].trim());
+                walletService.credit(agent.getOwnerId(), Math.max(0, session.getCapital() * pct / 100));
+                session.setWalletSettled(true);
+            }
             autopilotEventRepository.deleteBySessionId(session.getId());
             autopilotAssetRepository.deleteBySessionId(session.getId());
             autopilotSessionRepository.delete(session);

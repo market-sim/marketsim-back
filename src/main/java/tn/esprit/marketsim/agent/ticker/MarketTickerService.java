@@ -72,6 +72,12 @@ public class MarketTickerService {
     private final ObjectMapper json = new ObjectMapper();
     private volatile Ticker cache;
 
+    /** Derniers cours connus sans jamais attendre le reseau (recherche globale). */
+    public List<Quote> cachedQuotes() {
+        Ticker current = cache;
+        return current == null ? List.of() : current.quotes();
+    }
+
     public Ticker ticker() {
         Ticker current = cache;
         if (current != null && current.updatedAt().plus(CACHE_TTL).isAfter(Instant.now())) {

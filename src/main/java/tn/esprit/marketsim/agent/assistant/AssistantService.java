@@ -101,6 +101,20 @@ public class AssistantService {
             au plus 4 points, chiffres arrondis. Réponds en français. Si l'utilisateur écrit en dialecte tunisien ou en arabizi, \
             comprends-le et réponds en français simple. Environ 80 à 180 mots.""";
 
+    static final String MENTOR_PROMPT = """
+            Tu es Max, le mentor de l'Académie du trading de MarketSim AI : un jeu éducatif en 3D où l'élève visite \
+            des bâtiments (Place du Marché, Tour des Bougies, Banque des Ordres, Forteresse du Risque, Observatoire, \
+            Temple du Mental, Port des Actifs, Volcan du Krach) qui enseignent chacun une notion de trading. Tout l'argent est virtuel.
+
+            Ton rôle : expliquer simplement, avec un exemple chiffré concret, et vérifier que l'élève a compris. \
+            Pars de ce que l'élève sait déjà (stations terminées, erreurs au quiz, statistiques de ses vraies parties). \
+            Quand il demande quoi réviser, appuie-toi sur le bloc « Parcours personnalisé » et cite les chiffres qui y figurent \
+            (n'en invente aucun), puis dis-lui quel bâtiment visiter. Termine souvent par une petite question pour le faire réfléchir.
+
+            Style : tutoiement, chaleureux et motivant comme un mentor de jeu vidéo, phrases courtes, pas de tableaux ni de titres, \
+            au plus 4 points dans une liste. Réponds en français ; si l'élève écrit en dialecte tunisien ou en arabe, comprends-le \
+            et réponds en français simple. Environ 60 à 160 mots. Pas de conseil d'investissement sur de l'argent réel.""";
+
     public record ChatMessage(@NotBlank String role, @NotBlank @Size(max = 8000) String content) {
     }
 
@@ -157,6 +171,17 @@ public class AssistantService {
      */
     public ChatResponse chatCoach(User user, List<ChatMessage> messages, String coachContext, boolean web,
                                   Function<String, Optional<String>> offline) {
+        return chatPersona(user, messages, COACH_PROMPT, coachContext, web, offline);
+    }
+
+    /** Max, le mentor de l'Academie : contexte = progression dans le jeu educatif et parcours personnalise. */
+    public ChatResponse chatMentor(User user, List<ChatMessage> messages, String academyContext,
+                                   Function<String, Optional<String>> offline) {
+        return chatPersona(user, messages, MENTOR_PROMPT, academyContext, false, offline);
+    }
+
+    private ChatResponse chatPersona(User user, List<ChatMessage> messages, String system, String extraContext, boolean web,
+                                     Function<String, Optional<String>> offline) {
         List<ChatMessage> history = sanitize(messages);
         if (history.isEmpty()) {
             throw new IllegalArgumentException("La conversation doit se terminer par un message de l'utilisateur");
@@ -167,7 +192,7 @@ public class AssistantService {
             if (own.isPresent()) return new ChatResponse(own.get(), List.of(), false, false, "local", offlineReason);
             return local(user, history, offlineReason);
         }
-        return run(c, user, history, web, COACH_PROMPT, coachContext);
+        return run(c, user, history, web, system, extraContext);
     }
 
     private ChatResponse run(AnthropicClient c, User user, List<ChatMessage> history, boolean wantWeb, String system,
@@ -225,7 +250,9 @@ public class AssistantService {
             boolean last = i == history.size() - 1;
             String content = last
                     ? "Contexte (données de l'application, à jour) :\n" + context
-                            + (extraContext == null ? "" : "\n\nContexte de l'écran et analyse du coach (calcul sur données réelles) :\n" + extraContext)
+                            + (extraContext == null ? "" : "\n\n" + (MENTOR_PROMPT.equals(system)
+                                    ? "Progression de l'élève dans l'Académie et parcours personnalisé :\n"
+                                    : "Contexte de l'écran et analyse du coach (calcul sur données réelles) :\n") + extraContext)
                             + "\n---\n" + m.content()
                     : m.content();
             if ("user".equals(m.role())) builder.addUserMessage(content);

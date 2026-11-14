@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Reglages locaux (identifiants SMTP...) ###
+/config/application.properties

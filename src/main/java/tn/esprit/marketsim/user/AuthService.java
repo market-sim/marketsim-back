@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.security.JwtService;
+import tn.esprit.marketsim.user.account.AccountService;
 import tn.esprit.marketsim.user.activity.ActivityAction;
 import tn.esprit.marketsim.user.activity.ActivityLogService;
 import tn.esprit.marketsim.user.activity.ActivityOutcome;
@@ -33,9 +34,12 @@ public class AuthService {
     private final ActivityLogService activityLogService;
     private final LoginAnomalyService loginAnomalyService;
     private final LoginRequestContext loginRequestContext;
+    /** Sessions, double authentification et confirmation d'e-mail. */
+    private final AccountService accountService;
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
+        PasswordPolicy.check(req.password());
         GlobalUserSettings settings = settingsService.getOrCreate();
         if (!settings.isRegistrationEnabled()) {
             activityLogService.recordImmediate(null, null, ActivityAction.REGISTER, ActivityOutcome.FAILURE,
@@ -54,10 +58,13 @@ public class AuthService {
                 .password(passwordEncoder.encode(req.password()))
                 .role(Role.USER)
                 .enabled(true)
+                .emailVerified(false)
                 .build();
         userRepository.save(user);
         activityLogService.recordAfterCommit(user.getId(), user.getId(), ActivityAction.REGISTER, "OK");
-        return new AuthResponse(jwtService.generateToken(user), user);
+        accountService.sendVerification(user);
+        accountService.welcome(user);
+        return accountService.issue(user);
     }
 
     @Transactional
@@ -105,7 +112,34 @@ public class AuthService {
         activityLogService.recordAfterCommit(userId, userId, ActivityAction.LOGIN, "OK", browserMeta,
                 logId -> loginAnomalyService.assessLogin(logId, userId, false, userAgent, deviceHint, attemptAt),
                 attemptAt);
-        return new AuthResponse(jwtService.generateToken(user), user);
+        return accountService.issue(user);
+    }
+
+    /** Fin d'une connexion par passkey (la signature a deja ete verifiee par PasskeyService). */
+    @Transactional
+    public AuthResponse loginWithPasskey(User user, String passkeyName) {
+        Instant attemptAt = Instant.now();
+        String userAgent = loginRequestContext.userAgent();
+        String deviceHint = loginRequestContext.deviceHint();
+        TraceDetails meta = loginBrowserDetails(userAgent).add("method", null, "passkey");
+        if (user.isTemporarilyLocked()) {
+            activityLogService.recordImmediate(user.getId(), user.getId(), ActivityAction.PASSKEY_LOGIN,
+                    ActivityOutcome.FAILURE, "ACCOUNT_LOCKED", meta, attemptAt);
+            throw new IllegalArgumentException("Compte temporairement verrouille jusqu'a " + user.getLockedUntil());
+        }
+        if (!user.isEnabled() || Boolean.TRUE.equals(user.getDeleted())) {
+            activityLogService.recordImmediate(user.getId(), user.getId(), ActivityAction.PASSKEY_LOGIN,
+                    ActivityOutcome.FAILURE, "ACCOUNT_DISABLED", meta, attemptAt);
+            throw new IllegalArgumentException("Compte desactive");
+        }
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        userRepository.save(user);
+        Long userId = user.getId();
+        activityLogService.recordAfterCommit(userId, userId, ActivityAction.PASSKEY_LOGIN, "OK", meta,
+                logId -> loginAnomalyService.assessLogin(logId, userId, false, userAgent, deviceHint, attemptAt),
+                attemptAt);
+        return accountService.issueAfterPasskey(user);
     }
 
     private static TraceDetails loginBrowserDetails(String userAgent) {

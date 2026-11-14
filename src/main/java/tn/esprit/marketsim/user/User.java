@@ -67,12 +67,46 @@ public class User {
 
     private LocalDateTime createdAt;
 
+    /** E-mail confirme par le lien recu a l'inscription ; null = compte cree avant cette verification (considere confirme). */
+    private Boolean emailVerified;
+
+    /** Secret de la double authentification (TOTP, base32), jamais renvoye au client. */
+    @JsonIgnore
+    @Column(length = 64)
+    private String totpSecret;
+
+    /** Double authentification activee (null = non). */
+    private Boolean totpEnabled;
+
+    /** Compte supprime par son proprietaire (donnees personnelles anonymisees). */
+    private Boolean deleted;
+
+    /** cle aleatoire de la photo de profil (change a chaque nouvelle photo), null si aucune photo */
+    @JsonIgnore
+    @Column(length = 36)
+    private String avatarKey;
+
+    /** Adresse publique de la photo de profil (null si aucune). */
+    public String getAvatarUrl() {
+        return avatarKey == null ? null : "/api/public/avatars/" + avatarKey;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now();
         if (role == null) role = Role.USER;
         if (level == null) level = UserLevel.DEBUTANT;
         if (virtualBalance == null) virtualBalance = new BigDecimal("100000");
+    }
+
+    @JsonIgnore
+    public boolean isTwoFactorOn() {
+        return Boolean.TRUE.equals(totpEnabled) && totpSecret != null;
+    }
+
+    /** Pour le client : vrai si l'e-mail est confirme (les anciens comptes le sont d'office). */
+    public boolean isEmailConfirmed() {
+        return emailVerified == null || emailVerified;
     }
 
     @JsonIgnore

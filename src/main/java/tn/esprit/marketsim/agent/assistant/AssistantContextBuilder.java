@@ -91,8 +91,23 @@ public class AssistantContextBuilder {
                 .map(AssistantContextBuilder::toAlert)
                 .toList();
 
-        return new Snapshot(user.getFirstName(), String.valueOf(user.getLevel()), agents, decisions, tournament, alerts,
+        return new Snapshot(user.getFirstName(),
+                user.getRole() == tn.esprit.marketsim.user.Role.ADMIN ? "ADMIN" : String.valueOf(user.getLevel()), agents, decisions, tournament, alerts,
                 autopilotService.summaries(user.getId()));
+    }
+
+    /** Consigne de style selon le niveau du joueur : plus il progresse, moins on vulgarise. */
+    static String styleFor(String level) {
+        if (level == null) return "clair et pédagogique.";
+        return switch (level) {
+            case "DEBUTANT" -> "débutant : mots simples, phrases courtes, définis chaque terme technique (stop-loss, RSI, volatilité...), "
+                    + "un exemple chiffré avec 1 000 $, et termine par UNE action concrète. Rappelle que le pilote automatique se débloque au niveau Intermédiaire.";
+            case "INTERMEDIAIRE" -> "intermédiaire : explications claires, termes techniques permis avec une courte définition, insiste sur la gestion du risque.";
+            case "AVANCE" -> "avancé : réponse technique et concise (indicateurs, ratio gain/risque, drawdown, probabilités), peu de vulgarisation.";
+            case "EXPERT" -> "expert : réponse dense et chiffrée, hypothèses et limites statistiques explicites, aucune vulgarisation.";
+            case "ADMIN" -> "administrateur de la plateforme : réponse factuelle et complète, sans conseil de progression.";
+            default -> "clair et pédagogique.";
+        };
     }
 
     /** Version texte, jointe a la question pour l'assistant en ligne (Claude). */
@@ -102,6 +117,7 @@ public class AssistantContextBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("Date du jour : ").append(LocalDate.now().format(DATE)).append('\n');
         sb.append("Utilisateur : ").append(s.userName()).append(" (niveau ").append(s.level()).append(")\n");
+        sb.append("Style de réponse attendu pour ce niveau : ").append(styleFor(s.level())).append('\n');
 
         sb.append("\nAgents (").append(s.agents().size()).append(") :\n");
         if (s.agents().isEmpty()) sb.append("- aucun agent créé\n");

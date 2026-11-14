@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.common.NotFoundException;
+import tn.esprit.marketsim.progression.ProgressionService;
 import tn.esprit.marketsim.user.User;
 import tn.esprit.marketsim.user.UserLevel;
 import tn.esprit.marketsim.user.UserRepository;
@@ -21,6 +22,8 @@ public class UserLevelService {
     private final UserLevelAssessmentRepository assessmentRepository;
     private final UserLevelFeatureExtractor featureExtractor;
     private final UserRepository userRepository;
+    /** Niveau gagne en tradant (portefeuille + competences) : prioritaire des que le joueur a commence. */
+    private final ProgressionService progressionService;
 
     @Transactional
     public UserLevelResponse recomputeOwn(Long userId) {
@@ -67,6 +70,20 @@ public class UserLevelService {
             reasons = model.explain(features);
             if (user != null && user.getLevel() != level) {
                 user.setLevel(level);
+                userRepository.save(user);
+            }
+        }
+
+        // Le niveau de trading (portefeuille de 1 000 $ + competences) remplace le niveau d'activite des que
+        // l'utilisateur a un profil de trader : c'est lui qui pilote la difficulte de l'application.
+        UserLevel trading = progressionService == null ? null : progressionService.tradingLevel(userId).orElse(null);
+        if (trading != null) {
+            level = trading;
+            insufficient = false;
+            reasons = new java.util.ArrayList<>(reasons);
+            reasons.add(0, "TRADING_PROGRESSION");
+            if (user != null && user.getLevel() != trading) {
+                user.setLevel(trading);
                 userRepository.save(user);
             }
         }

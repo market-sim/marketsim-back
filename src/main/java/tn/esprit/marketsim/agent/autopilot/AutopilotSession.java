@@ -75,6 +75,12 @@ public class AutopilotSession {
     private int decisionsSinceCheck;
     private int consecutiveAlerts;
 
+    /** Capital emprunte au portefeuille du jeu (rendu a l'arret, avec le gain ou la perte). */
+    private Boolean walletFunded;
+
+    /** Le portefeuille a deja ete rembourse (une seule fois). */
+    private Boolean walletSettled;
+
     private LocalDateTime startedAt;
     private LocalDateTime lastRunAt;
     private LocalDateTime nextRunAt;

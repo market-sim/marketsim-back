@@ -1,0 +1,19 @@
+# Copie ce fichier en « application.properties » dans ce meme dossier (main-backend/config/),
+# remplis tes identifiants, puis relance Lancer-MarketSim.bat. Ce fichier n'est jamais envoye sur Git.
+#
+# --- Mailtrap (conseille pour le developpement : les e-mails arrivent dans une boite de test) ---
+# https://mailtrap.io -> Email Testing -> Inboxes -> ta boite -> SMTP Settings
+app.mail.smtp.host=sandbox.smtp.mailtrap.io
+app.mail.smtp.port=2525
+app.mail.smtp.username=COLLE_ICI_LE_USERNAME
+app.mail.smtp.password=COLLE_ICI_LE_PASSWORD
+app.mail.smtp.security=STARTTLS
+app.mail.from=no-reply@marketsim.tn
+#
+# --- Gmail (envoi reel) : il faut un « mot de passe d'application » (compte Google > Securite) ---
+# app.mail.smtp.host=smtp.gmail.com
+# app.mail.smtp.port=587
+# app.mail.smtp.username=ton.adresse@gmail.com
+# app.mail.smtp.password=xxxx xxxx xxxx xxxx
+# app.mail.smtp.security=STARTTLS
+# app.mail.from=ton.adresse@gmail.com

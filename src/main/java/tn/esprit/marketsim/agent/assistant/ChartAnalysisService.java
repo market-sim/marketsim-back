@@ -96,7 +96,22 @@ public class ChartAnalysisService {
     private final tn.esprit.marketsim.agent.AgentConfigService agentService;
     private final ObjectMapper json = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public ChartResponse analyze(User user, ChartRequest req) {
+    /**
+     * Au niveau Debutant, le profil est force a « Prudent » (0,5 % du capital risque par trade) :
+     * on apprend a gerer le risque avant de prendre des positions offensives.
+     */
+    static ChartRequest forLevel(User user, ChartRequest req) {
+        if (user == null || req.riskProfile() == null || user.getRole() == tn.esprit.marketsim.user.Role.ADMIN
+                || user.getLevel() != tn.esprit.marketsim.user.UserLevel.DEBUTANT) {
+            return req;
+        }
+        double pct = req.riskPercent() == null ? 0.5 : Math.min(0.5, req.riskPercent());
+        return new ChartRequest(req.imageBase64(), req.mediaType(), req.question(), req.agentId(), "CONSERVATIVE", pct,
+                req.accountBalance());
+    }
+
+    public ChartResponse analyze(User user, ChartRequest original) {
+        ChartRequest req = forLevel(user, original);
         AnthropicClient client = assistantService.client();
         if (client == null) {
             throw new IllegalArgumentException("L'analyse de captures d'écran utilise l'IA Claude (vision) : définissez la variable "
