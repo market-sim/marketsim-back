@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -40,13 +41,30 @@ public class Strategy {
     @Column(length = 2000)
     private String description;
 
-    /** Indicateurs utilises, ex : "RSI(14),MACD(12,26,9)". */
+    /**
+     * Indicateurs utilises, ex : "RSI(14),MACD(12,26,9)". Quand la strategie a un {@link #type},
+     * ce texte est regenere a partir du type et des parametres.
+     */
     private String indicators;
+
+    /**
+     * Type de strategie a regles. Facultatif pour rester compatible avec les strategies deja creees,
+     * mais obligatoire pour lancer un backtest. Colonne VARCHAR (et non ENUM MySQL) pour pouvoir
+     * ajouter des types plus tard sans migration.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(columnDefinition = "VARCHAR(32)")
+    private StrategyType type;
+
+    /** Parametres du type (valides et completes par {@link StrategyRules}). */
+    @Embedded
+    private StrategyParams params;
 
     @Enumerated(EnumType.STRING)
     private Status status = Status.ACTIVE;
 
-    // Resultats du dernier backtest (remplis par la partie IA / backtesting)
+    // Resultats du dernier backtest, mis a jour par BacktestService.
+    // winRate et maxDrawdown sont en pourcentage (ex : 55.0 et -12.4) : la page les affiche tels quels.
     private Double sharpe;
     private Double winRate;
     private Double maxDrawdown;
