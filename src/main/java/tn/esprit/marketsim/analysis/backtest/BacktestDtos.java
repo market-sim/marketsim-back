@@ -35,8 +35,31 @@ public final class BacktestDtos {
                                   Double takeProfit, Double positionFraction, LocalDate splitDate) {
     }
 
+    /** Demande de comparaison : les reglages de simulation sont communs a toutes les strategies. */
+    public record CompareRequest(List<Long> strategyIds, String symbol, LocalDate from, LocalDate to,
+                                 Double initialCapital, Double feeRate, Double slippage, Double stopLoss,
+                                 Double takeProfit, Double positionFraction, LocalDate splitDate) {
+    }
+
     /** Courbes journalieres : les quatre tableaux ont la meme taille. */
     public record Curves(LocalDate[] dates, double[] equity, double[] buyHold, double[] drawdown) {
+    }
+
+    /** Courbes propres a une strategie dans une comparaison. */
+    public record ComparisonCurve(LocalDate[] dates, double[] equity, double[] drawdown) {
+    }
+
+    /** Resultat d'une strategie, avec son etat au moment de la comparaison. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record StrategyComparison(Long strategyId, String strategyName, StrategyType strategyType,
+                                    StrategyParams params, Metrics metrics, Segment train, Segment test,
+                                    ComparisonCurve curves) {
+    }
+
+    /** Resultat complet d'une comparaison, renvoye sans persistance. */
+    public record ComparisonResult(String symbol, LocalDate from, LocalDate to, LocalDate splitDate,
+                                   String dataSource, String dataHash, BacktestSettings settings,
+                                   LocalDate[] dates, double[] buyHold, List<StrategyComparison> strategies) {
     }
 
     /** Metriques d'une sous-periode (entrainement ou test), simulee a part depuis le capital initial. */

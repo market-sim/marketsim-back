@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestDetail;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestRequest;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
 import tn.esprit.marketsim.user.User;
 
 /**
@@ -37,6 +39,11 @@ public class BacktestController {
     @PostMapping
     public BacktestDetail run(@RequestBody BacktestRequest request, @AuthenticationPrincipal User user) {
         return service.run(request, user);
+    }
+
+    @PostMapping("/compare")
+    public ComparisonResult compare(@RequestBody CompareRequest request, @AuthenticationPrincipal User user) {
+        return service.compare(request, user);
     }
 
     @GetMapping

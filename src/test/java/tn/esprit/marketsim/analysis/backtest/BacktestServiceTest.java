@@ -34,6 +34,8 @@ import tn.esprit.marketsim.analysis.StrategyType;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestDetail;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestResult;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
 import tn.esprit.marketsim.analysis.backtest.BacktestEngine.ExitReason;
 import tn.esprit.marketsim.common.NotFoundException;
 import tn.esprit.marketsim.user.User;
@@ -100,6 +102,10 @@ class BacktestServiceTest {
     private static BacktestRequest request(Double capital, Double fee, Double slippage, Double stopLoss,
                                            Double takeProfit, Double fraction) {
         return new BacktestRequest(5L, "TEST", null, null, capital, fee, slippage, stopLoss, takeProfit, fraction, null);
+    }
+
+    private static CompareRequest compareRequest(List<Long> ids, LocalDate split) {
+        return new CompareRequest(ids, "TEST", null, null, 5000.0, 0.002, 0.001, 0.05, 0.10, 0.8, split);
     }
 
     private static String messageOf(Runnable call) {
@@ -238,6 +244,83 @@ class BacktestServiceTest {
         assertTrue(message.contains("51"), message);
     }
 
+    // ===================== Comparaison =====================
+
+    @Test
+    void comparisonReusesOneSeriesAndReturnsCurvesBenchmarkAndSplitMetrics() {
+        Strategy sma = strategy(5L, "SMA", StrategyType.SMA_CROSS);
+        sma.setParams(smaCross(5, 20));
+        Strategy rsi = strategy(6L, "RSI", StrategyType.RSI);
+        LocalDate split = START.plusDays(150);
+        PriceSeries prices = wavy(300);
+        when(marketData.series("TEST")).thenReturn(prices);
+
+        ComparisonResult result = service.compare(compareRequest(List.of(5L, 6L), split), user);
+
+        assertEquals("TEST", result.symbol());
+        assertEquals(START, result.from());
+        assertEquals(START.plusDays(299), result.to());
+        assertEquals(split, result.splitDate());
+        assertEquals(prices.hash(), result.dataHash());
+        assertEquals(new BacktestSettings(5000, 0.002, 0.001, 0.05, 0.10, 0.8), result.settings());
+        assertEquals(300, result.dates().length);
+        assertEquals(300, result.buyHold().length);
+        assertEquals(2, result.strategies().size());
+        assertEquals(sma.getId(), result.strategies().get(0).strategyId());
+        assertEquals(rsi.getId(), result.strategies().get(1).strategyId());
+        for (var strategy : result.strategies()) {
+            assertEquals(300, strategy.curves().dates().length);
+            assertEquals(300, strategy.curves().equity().length);
+            assertEquals(300, strategy.curves().drawdown().length);
+            assertNotNull(strategy.train());
+            assertNotNull(strategy.test());
+            assertTrue(strategy.metrics().tradeCount() >= 0);
+        }
+        verify(marketData).series("TEST");
+        verify(repository, never()).save(any(Backtest.class));
+    }
+
+    @Test
+    void comparisonRejectsInvalidCountsAndDuplicateIdsBeforeLoadingPrices() {
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> service.compare(null, user)).getMessage().contains("obligatoire"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> service.compare(compareRequest(List.of(5L), null), user)).getMessage().contains("2 et 5"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> service.compare(compareRequest(List.of(5L, 6L, 7L, 8L, 9L, 10L), null), user))
+                .getMessage().contains("2 et 5"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> service.compare(compareRequest(List.of(5L, 5L), null), user)).getMessage().contains("distinctes"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> service.compare(compareRequest(List.of(0L, 6L), null), user)).getMessage().contains("positif"));
+        verify(marketData, never()).series(anyString());
+    }
+
+    @Test
+    void comparisonOfAnotherUsersStrategyReturnsNotFoundBeforeLoadingPrices() {
+        strategy(6L, "RSI", StrategyType.RSI);
+        when(strategies.findOne(5L, user)).thenThrow(new NotFoundException("Strategie introuvable"));
+
+        assertTrue(assertThrows(NotFoundException.class,
+                () -> service.compare(compareRequest(List.of(5L, 6L), null), user))
+                .getMessage().contains("introuvable"));
+
+        verify(marketData, never()).series(anyString());
+    }
+
+    @Test
+    void comparisonRejectsInvalidStrategyBeforeLoadingPrices() {
+        Strategy invalid = strategy(5L, "SMA invalide", StrategyType.SMA_CROSS);
+        invalid.setParams(smaCross(20, 5));
+        strategy(6L, "RSI", StrategyType.RSI);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.compare(compareRequest(List.of(5L, 6L), null), user));
+
+        verify(marketData, never()).series(anyString());
+        verify(repository, never()).save(any(Backtest.class));
+    }
+
     @Test
     void historyBeforeThePeriodServesAsWarmup() {
         // meme strategie, mais la periode commence apres 100 seances d'historique : pas de chauffe a attendre
@@ -300,12 +383,16 @@ class BacktestServiceTest {
     // ===================== Enregistrement et propriete =====================
 
     private Strategy strategy(StrategyType type) {
+        return strategy(5L, "Ma strategie", type);
+    }
+
+    private Strategy strategy(Long id, String name, StrategyType type) {
         Strategy s = new Strategy();
-        s.setId(5L);
-        s.setName("Ma strategie");
+        s.setId(id);
+        s.setName(name);
         s.setType(type);
         s.setOwner(user);
-        when(strategies.findOne(5L, user)).thenReturn(s);
+        when(strategies.findOne(id, user)).thenReturn(s);
         return s;
     }
 

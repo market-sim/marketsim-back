@@ -1,6 +1,7 @@
 package tn.esprit.marketsim.analysis.backtest;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -17,8 +18,12 @@ import tn.esprit.marketsim.analysis.StrategyType;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestDetail;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestResult;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonCurve;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.Curves;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.Segment;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StrategyComparison;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StoredSettings;
 import tn.esprit.marketsim.analysis.backtest.BacktestEngine.Run;
 import tn.esprit.marketsim.analysis.backtest.BacktestEngine.Trade;
@@ -95,6 +100,60 @@ public class BacktestService {
 
         updateStrategySummary(strategy, b);
         return detail(b, params, settings, result);
+    }
+
+    /** Compare deux a cinq strategies sur une seule serie de cours, sans enregistrer les resultats. */
+    public ComparisonResult compare(CompareRequest req, User user) {
+        if (req == null) {
+            throw new IllegalArgumentException("La demande de comparaison est obligatoire");
+        }
+        if (req.strategyIds() == null || req.strategyIds().size() < 2 || req.strategyIds().size() > 5) {
+            throw new IllegalArgumentException("strategyIds : choisissez entre 2 et 5 stratégies");
+        }
+        if (req.strategyIds().stream().anyMatch(id -> id == null || id <= 0)) {
+            throw new IllegalArgumentException("strategyIds : chaque identifiant doit être strictement positif");
+        }
+        if (req.strategyIds().stream().distinct().count() != req.strategyIds().size()) {
+            throw new IllegalArgumentException("strategyIds : les stratégies doivent être distinctes");
+        }
+        if (req.symbol() == null || req.symbol().isBlank()) {
+            throw new IllegalArgumentException("symbol : l'actif est obligatoire");
+        }
+
+        Long firstId = req.strategyIds().get(0);
+        BacktestSettings settings = settings(new BacktestRequest(firstId, req.symbol(), req.from(), req.to(),
+                req.initialCapital(), req.feeRate(), req.slippage(), req.stopLoss(), req.takeProfit(),
+                req.positionFraction(), req.splitDate()));
+
+        List<Strategy> selected = new ArrayList<>(req.strategyIds().size());
+        List<StrategyParams> params = new ArrayList<>(req.strategyIds().size());
+        for (Long id : req.strategyIds()) {
+            Strategy strategy = strategies.findOne(id, user);
+            if (strategy.getType() == null) {
+                throw new IllegalArgumentException("La stratégie « " + strategy.getName()
+                        + " » n'a pas de type : choisissez sa règle avant de la comparer");
+            }
+            selected.add(strategy);
+            params.add(StrategyRules.normalize(strategy.getType(), strategy.getParams()));
+        }
+
+        PriceSeries series = marketData.series(req.symbol());
+        List<StrategyComparison> results = new ArrayList<>(selected.size());
+        Curves referenceCurves = null;
+        for (int i = 0; i < selected.size(); i++) {
+            Strategy strategy = selected.get(i);
+            BacktestResult result = simulate(series, strategy.getType(), params.get(i), settings,
+                    req.from(), req.to(), req.splitDate());
+            Curves curves = result.curves();
+            if (referenceCurves == null) referenceCurves = curves;
+            results.add(new StrategyComparison(strategy.getId(), strategy.getName(), strategy.getType(),
+                    params.get(i), result.metrics(), result.train(), result.test(),
+                    new ComparisonCurve(curves.dates(), curves.equity(), curves.drawdown())));
+        }
+
+        LocalDate[] dates = referenceCurves.dates();
+        return new ComparisonResult(series.symbol(), dates[0], dates[dates.length - 1], req.splitDate(),
+                series.source(), series.hash(), settings, dates, referenceCurves.buyHold(), results);
     }
 
     /**
