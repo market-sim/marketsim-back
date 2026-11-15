@@ -17,6 +17,7 @@ import tn.esprit.marketsim.market.Asset;
 import tn.esprit.marketsim.market.AssetRepository;
 import tn.esprit.marketsim.market.MarketNews;
 import tn.esprit.marketsim.market.MarketNewsRepository;
+import tn.esprit.marketsim.market.PredictionService;
 import tn.esprit.marketsim.market.SentimentAnalyzer;
 import tn.esprit.marketsim.stress.StressScenario;
 import tn.esprit.marketsim.stress.StressScenarioRepository;
@@ -33,6 +34,7 @@ public class DataInitializer implements CommandLineRunner {
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
     private final MarketNewsRepository marketNewsRepository;
+    private final PredictionService predictionService;
     private final CourseRepository courseRepository;
     private final StressScenarioRepository scenarioRepository;
     private final PasswordEncoder passwordEncoder;
@@ -87,6 +89,17 @@ public class DataInitializer implements CommandLineRunner {
                             "Fed signals pause in rate hikes as inflation cools",
                             "CNBC", "https://cnbc.com", "EUR/USD",
                             now.minus(2, ChronoUnit.HOURS), 0.0, SentimentAnalyzer.Label.NEUTRAL)));
+        }
+
+        if (predictionService.findAll().isEmpty()) {
+            for (Asset asset : assetRepository.findAll()) {
+                try {
+                    predictionService.generateFor(asset.getSymbol());
+                } catch (Exception e) {
+                    log.warn("Prédiction non générée pour {} : {}", asset.getSymbol(), e.getMessage());
+                }
+            }
+            log.info("Prédictions initiales générées pour {} actifs", assetRepository.count());
         }
 
         if (courseRepository.count() == 0) {
