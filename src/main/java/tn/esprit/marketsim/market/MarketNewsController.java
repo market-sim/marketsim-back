@@ -1,6 +1,7 @@
 package tn.esprit.marketsim.market;
 
 import java.util.List;
+import java.time.Instant;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.format.annotation.DateTimeFormat;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,7 @@ import lombok.RequiredArgsConstructor;
 public class MarketNewsController {
 
     private final MarketNewsService service;
+    private final FinancialSentimentService sentimentService;
 
     /**
      * Retourne toutes les actualités (sans filtre) ou celles d'un symbole précis.
@@ -38,7 +41,17 @@ public class MarketNewsController {
      * @param symbol optionnel — ex : "AAPL", "BTC/USD"
      */
     @GetMapping
-    public List<MarketNews> list(@RequestParam(required = false) String symbol) {
+    public List<MarketNews> list(@RequestParam(required = false) String symbol,
+                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+                                 @RequestParam(required = false) Integer page,
+                                 @RequestParam(required = false) Integer size) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("from doit être antérieur ou égal à to");
+        }
+        if (from != null || to != null || page != null || size != null) {
+            return service.search(symbol, from, to, page == null ? 0 : page, size == null ? 50 : size);
+        }
         if (symbol != null && !symbol.isBlank()) {
             return service.findBySymbol(symbol);
         }
@@ -54,6 +67,12 @@ public class MarketNewsController {
     @PreAuthorize("hasRole('ADMIN')")
     public MarketNews create(@Valid @RequestBody MarketNewsRequest request) {
         return service.create(request);
+    }
+
+    /** Lance une analyse FinBERT et conserve chaque tentative dans l'historique du Module 5. */
+    @PostMapping("/{id}/analyze")
+    public SentimentAnalysisResponse analyze(@PathVariable Long id) {
+        return sentimentService.analyze(id);
     }
 
     /** Supprime un article importé. */

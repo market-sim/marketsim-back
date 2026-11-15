@@ -68,6 +68,21 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
     }
 
+    @ExceptionHandler(InsufficientDataException.class)
+    public ResponseEntity<Map<String, Object>> insufficientData(InsufficientDataException ex) {
+        Map<String, Object> map = body(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), null).getBody();
+        // ajoute un statut explicite consommé par le frontend
+        if (map != null) map.put("predictionStatus", "INSUFFICIENT_DATA");
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(map);
+    }
+
+    @ExceptionHandler(ModelUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> modelUnavailable(ModelUnavailableException ex) {
+        Map<String, Object> map = body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), null).getBody();
+        if (map != null) map.put("predictionStatus", "UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(map);
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> unreadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
         String message = "JSON invalide";
