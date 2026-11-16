@@ -20,12 +20,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * meilleur (plus petite MAE) produit la prevision a {@code horizon} jours :
  * <ul>
  *   <li><b>naive</b> : demain = aujourd'hui ;</li>
- *   <li><b>drift</b> : marche aleatoire avec la tendance moyenne ;</li>
  *   <li><b>holt</b> : lissage exponentiel double de Holt (niveau + tendance, alpha / beta par grille) ;</li>
- *   <li><b>arima</b> : ARIMA(1,1,0) — AR(1) sur les variations, estime par moindres carres.</li>
+ *   <li><b>arima</b> : ARIMA(1,1,0) — AR(1) sur les variations, estime par moindres carres ;</li>
+ *   <li><b>sentiment_adjusted</b> : le meilleur des trois precedents, infléchi par le sentiment FinBERT des
+ *       actualites (variable exogene) : sentiment × 0,1 ecart-type journalier par jour.</li>
  * </ul>
- * Le sentiment (score -1..+1 des actualites) ajoute une petite inflexion de tendance : 0,1 ecart-type journalier
- * par jour au maximum, renvoyee dans {@code sentimentContribution} (en % du prix final).
+ * L'effet du sentiment sur la prevision finale est renvoye dans {@code sentimentContribution} (en $, explication
+ * XAI : de combien le sentiment deplace le prix vise).
  */
 @Component
 public class LocalForecastEngine {
@@ -51,20 +52,20 @@ public class LocalForecastEngine {
             out.put("status", "INSUFFICIENT_DATA");
             return out;
         }
-        String[] names = {"naive", "drift", "holt", "arima"};
-        Model[] models = {LocalForecastEngine::naive, LocalForecastEngine::drift, LocalForecastEngine::holt,
-                LocalForecastEngine::arima110};
+        double s = Double.isFinite(sentimentScore) ? Math.max(-1, Math.min(1, sentimentScore)) : 0;
+        String[] names = {"naive", "holt", "arima"};
+        Model[] base = {LocalForecastEngine::naive, LocalForecastEngine::holt, LocalForecastEngine::arima110};
         int validation = Math.max(5, Math.min(30, n / 4));
 
         List<Candidate> candidates = new ArrayList<>();
-        for (int m = 0; m < models.length; m++) {
+        for (int m = 0; m < base.length; m++) {
             double[] res = new double[validation];
             double abs = 0;
             double sq = 0;
             for (int k = 0; k < validation; k++) {
                 int t = n - validation + k;          // on prevoit y[t] avec y[0..t-1]
                 double[] train = java.util.Arrays.copyOf(y, t);
-                double pred = models[m].forecast(train, 1)[0];
+                double pred = base[m].forecast(train, 1)[0];
                 double e = y[t] - pred;
                 res[k] = e;
                 abs += Math.abs(e);
@@ -72,22 +73,37 @@ public class LocalForecastEngine {
             }
             candidates.add(new Candidate(names[m], abs / validation, Math.sqrt(sq / validation), res));
         }
-        Candidate best = candidates.stream().min(Comparator.comparingDouble(Candidate::mae)).orElseThrow();
-        Model selected = models[java.util.Arrays.asList(names).indexOf(best.name())];
-        double[] path = selected.forecast(y, horizon);
-
-        // inflexion de sentiment, bornee
-        double s = Double.isFinite(sentimentScore) ? Math.max(-1, Math.min(1, sentimentScore)) : 0;
-        double sigma = dailyStd(y);
-        double last = y[n - 1];
-        double before = path[horizon - 1];
-        for (int k = 0; k < horizon; k++) {
-            path[k] = Math.max(1e-6, path[k] + s * SENTIMENT_WEIGHT * sigma * (k + 1));
+        Candidate bestBase = candidates.stream().min(Comparator.comparingDouble(Candidate::mae)).orElseThrow();
+        Model baseModel = base[java.util.Arrays.asList(names).indexOf(bestBase.name())];
+        // 4e candidat : le meilleur modele + le sentiment des actualites (meme evaluation walk-forward)
+        Model adjusted = (series, h) -> {
+            double[] p = baseModel.forecast(series, h);
+            double sig = dailyStd(series);
+            for (int k = 0; k < h; k++) p[k] = Math.max(1e-6, p[k] + s * SENTIMENT_WEIGHT * sig * (k + 1));
+            return p;
+        };
+        {
+            double[] res = new double[validation];
+            double abs = 0;
+            double sq = 0;
+            for (int k = 0; k < validation; k++) {
+                int t = n - validation + k;
+                double e = y[t] - adjusted.forecast(java.util.Arrays.copyOf(y, t), 1)[0];
+                res[k] = e;
+                abs += Math.abs(e);
+                sq += e * e;
+            }
+            candidates.add(new Candidate("sentiment_adjusted", abs / validation, Math.sqrt(sq / validation), res));
         }
+        Candidate best = candidates.stream().min(Comparator.comparingDouble(Candidate::mae)).orElseThrow();
+        boolean withSentiment = "sentiment_adjusted".equals(best.name());
+        double[] plain = baseModel.forecast(y, horizon);
+        double[] withS = adjusted.forecast(y, horizon);
+        double[] path = withSentiment ? withS : plain;
 
         out.put("status", "ANALYZED");
         out.put("selectedModel", best.name());
-        out.put("modelVersion", VERSION);
+        out.put("modelVersion", best.name() + "-" + VERSION);
         out.put("engine", "java-local");
         ArrayNode f = out.putArray("forecast");
         for (int k = 0; k < horizon; k++) {
@@ -103,13 +119,14 @@ public class LocalForecastEngine {
         ArrayNode c = out.putArray("candidates");
         for (Candidate cand : candidates) {
             ObjectNode o = c.addObject();
-            o.put("model", cand.name());
+            o.put("name", cand.name());   // meme cle que le service Python (lue par la page Marche)
             o.put("mae", round6(cand.mae()));
             o.put("rmse", round6(cand.rmse()));
             o.put("selected", cand == best);
         }
         out.put("sentimentScore", s);
-        out.put("sentimentContribution", last > 0 ? round6((path[horizon - 1] - before) / last * 100) : 0);
+        // XAI : de combien de dollars le sentiment deplace le prix vise a l'horizon
+        out.put("sentimentContribution", round6(withS[horizon - 1] - plain[horizon - 1]));
         return out;
     }
 
@@ -118,14 +135,6 @@ public class LocalForecastEngine {
     static double[] naive(double[] y, int h) {
         double[] out = new double[h];
         java.util.Arrays.fill(out, y[y.length - 1]);
-        return out;
-    }
-
-    static double[] drift(double[] y, int h) {
-        int n = y.length;
-        double slope = n > 1 ? (y[n - 1] - y[0]) / (n - 1) : 0;
-        double[] out = new double[h];
-        for (int k = 0; k < h; k++) out[k] = y[n - 1] + slope * (k + 1);
         return out;
     }
 

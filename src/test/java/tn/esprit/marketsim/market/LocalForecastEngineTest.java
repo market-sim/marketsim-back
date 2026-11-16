@@ -44,13 +44,18 @@ class LocalForecastEngineTest {
     }
 
     @Test
-    void leSentimentInflechitLegerementLaPrevision() {
+    void leSentimentEstUnCandidatEtSaContributionEstExpliquee() {
         List<Double> s = series(150, 50, 0, 1, 3);
-        double neutral = engine.forecast(s, 5, 0).path("forecast").get(4).path("value").asDouble();
-        JsonNode pos = engine.forecast(s, 5, 1);
-        double positive = pos.path("forecast").get(4).path("value").asDouble();
-        assertTrue(positive > neutral);
-        assertTrue(Math.abs(pos.path("sentimentContribution").asDouble()) < 5, "contribution bornee");
+        JsonNode neutre = engine.forecast(s, 5, 0);
+        JsonNode positif = engine.forecast(s, 5, 1);
+        JsonNode negatif = engine.forecast(s, 5, -1);
+        assertEquals(0.0, neutre.path("sentimentContribution").asDouble(), 1e-9);
+        assertTrue(positif.path("sentimentContribution").asDouble() > 0, "un sentiment positif pousse la cible vers le haut");
+        assertTrue(negatif.path("sentimentContribution").asDouble() < 0);
+        boolean present = false;
+        for (JsonNode c : positif.path("candidates")) present |= "sentiment_adjusted".equals(c.path("name").asText());
+        assertTrue(present);
+        assertTrue(positif.path("modelVersion").asText().endsWith("-ensemble-v1"));
     }
 
     @Test
