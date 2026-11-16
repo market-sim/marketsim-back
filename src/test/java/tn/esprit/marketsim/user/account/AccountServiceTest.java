@@ -39,7 +39,7 @@ import tn.esprit.marketsim.user.dto.AuthDtos.AuthResponse;
 
 class AccountServiceTest {
 
-    private static final String SECRET = "5PKe5X/y5ypLCsv4R3PJwuqU+XjicvTK/Aljs9yaPijVp2Pwwr7lpiTzj2tkH4DN";
+    private static final String SECRET = "Y2xlLWRlLXRlc3QtdW5pcXVlbWVudC1wYXMtdW4tc2VjcmV0LW1hcmtldHNpbSEh"; // cle de test, pas un secret
 
     private final PasswordEncoder encoder = new BCryptPasswordEncoder(4);
     private final List<AccountToken> tokens = new ArrayList<>();
