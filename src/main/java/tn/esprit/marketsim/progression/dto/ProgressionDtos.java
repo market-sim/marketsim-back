@@ -21,7 +21,7 @@ public final class ProgressionDtos {
     /**
      * Etat du trader : portefeuille, niveau, statistiques, conditions du niveau suivant et difficulte actuelle.
      *
-     * @param bankrupt vrai si le solde ne permet plus de jouer (il faut recommencer a 1 000 $)
+     * @param bankrupt vrai si le solde ne permet plus de jouer (il faut recommencer au capital de depart)
      */
     public record ProgressionResponse(
             double balance,

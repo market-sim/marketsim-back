@@ -49,7 +49,7 @@ public class ProgressionController {
         return service.settle(user, req);
     }
 
-    /** Recommencer a 1 000 $ (force=true : recommencer volontairement meme sans etre ruine). */
+    /** Recommencer au capital de depart (force=true : recommencer volontairement meme sans etre ruine). */
     @PostMapping("/restart")
     public ProgressionResponse restart(@RequestParam(defaultValue = "false") boolean force,
                                        @AuthenticationPrincipal User user) {

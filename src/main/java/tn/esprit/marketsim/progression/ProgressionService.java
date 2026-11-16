@@ -2,6 +2,7 @@ package tn.esprit.marketsim.progression;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
@@ -32,7 +33,7 @@ import tn.esprit.marketsim.user.UserLevel;
 import tn.esprit.marketsim.user.UserRepository;
 
 /**
- * Systeme de progression : portefeuille de 1 000 $ au depart, chaque partie le fait monter ou descendre,
+ * Systeme de progression : portefeuille unique (users.virtual_balance, 100 000 $ au depart), chaque partie le fait monter ou descendre,
  * le niveau suit l'argent ET la qualite du trading, et la difficulte de l'application suit le niveau.
  */
 @Service
@@ -45,6 +46,8 @@ public class ProgressionService {
     private final AgentConfigService agentService;
     private final ReplayService replayService;
     private final tn.esprit.marketsim.notification.NotificationService notifications;
+    /** Portefeuille unique (users.virtual_balance) : seul endroit ou l'argent bouge. */
+    private final WalletService wallet;
 
     @Transactional
     public ProgressionResponse me(User user) {
@@ -59,7 +62,7 @@ public class ProgressionService {
     @Transactional(readOnly = true)
     public Optional<ProgressionResponse> peek(User user) {
         requireTrader(user);
-        return profileRepository.findByUserId(user.getId()).map(this::toResponse);
+        return profileRepository.findByUserId(user.getId()).map(p -> toResponse(wallet.mirror(p, wallet.cash(user.getId()))));
     }
 
     /** Niveau de trading et score de competence (0-100) qui l'accompagne. */
@@ -73,7 +76,7 @@ public class ProgressionService {
         if (admin) return Optional.empty();
         return profileRepository.findByUserId(userId)
                 .filter(p -> p.getLevel() != null)
-                .map(p -> new TradingAssessment(p.getLevel(), ProgressionRules.skillScore(p.stats())));
+                .map(p -> new TradingAssessment(p.getLevel(), ProgressionRules.skillScore(wallet.mirror(p, wallet.cash(userId)).stats())));
     }
 
     /** Niveau de trading du joueur s'il a deja joue, sinon vide (utilise par le module 1). */
@@ -98,8 +101,11 @@ public class ProgressionService {
         userRepository.findAll().forEach(u -> {
             if (u.getRole() == Role.ADMIN) admins.add(u.getId());
         });
+        Map<Long, User> byId = new java.util.HashMap<>();
+        userRepository.findAll().forEach(u -> byId.put(u.getId(), u));
         return profileRepository.findAll().stream().filter(p -> !admins.contains(p.getUserId())).map(p -> {
-            Stats s = p.stats();
+            User u = byId.get(p.getUserId());
+            Stats s = (u == null ? p : wallet.mirror(p, wallet.cashOf(u))).stats();
             return new AdminTraderScore(p.getUserId(), p.getLevel(), p.getBestLevel(), ProgressionRules.round2(s.balance()),
                     ProgressionRules.skillScore(s), s.games(), s.trades(), s.winRate(), s.discipline(),
                     ProgressionRules.bankrupt(s), p.getRestarts(), p.getUpdatedAt());
@@ -129,7 +135,8 @@ public class ProgressionService {
         Stats before = profile.stats();
         UserLevel levelBefore = profile.getLevel();
         if (ProgressionRules.bankrupt(before)) {
-            throw new ConflictException("Portefeuille vide : recommence avec 1 000 $ avant de jouer.");
+            throw new ConflictException(String.format(java.util.Locale.FRANCE,
+                    "Portefeuille vide : recommence avec %,.0f $ avant de jouer.", ProgressionRules.START_BALANCE));
         }
         Difficulty diff = ProgressionRules.difficulty(levelBefore);
         AgentConfig agent = agentService.findOne(req.agentId(), user);
@@ -155,7 +162,15 @@ public class ProgressionService {
         if (counted) {
             Stats after = ProgressionRules.apply(before, new ProgressionRules.GameOutcome(sim.finalEquity(),
                     sim.tradeReturns(), sim.disciplinedTrades(), sim.maxDrawdown()));
+            // le resultat de la partie (gain ou perte) est applique au solde UNIQUE, sous verrou ; si le solde a
+            // bouge pendant la partie (ordre du module 2), l'ecart s'ajoute au solde courant
+            WalletService.Movement m = wallet.apply(user.getId(),
+                    java.math.BigDecimal.valueOf(ProgressionRules.round2(after.balance() - before.balance())),
+                    WalletService.Reason.GAME_RESULT, false, Map.of("symbol", replay.symbol(), "seed", replay.seed()));
+            after = new Stats(m.after().doubleValue(), after.games(), after.trades(), after.wins(), after.grossWin(),
+                    after.grossLoss(), after.disciplinedTrades(), after.sumMaxDrawdown());
             levelAfter = ProgressionRules.levelFor(after);
+            profile = profileFor(user.getId());
             profile.setStats(after);
             profile.setLevel(levelAfter);
             if (profile.getBestLevel() == null || levelAfter.ordinal() > profile.getBestLevel().ordinal()) {
@@ -184,7 +199,7 @@ public class ProgressionService {
                 toResponse(profile));
     }
 
-    /** Apres une ruine : retour a 1 000 $ et au niveau DEBUTANT (le meilleur niveau atteint reste memorise). */
+    /** Apres une ruine : retour au capital de depart et au niveau DEBUTANT (le meilleur niveau reste memorise). */
     @Transactional
     public ProgressionResponse restart(User user, boolean force) {
         requireTrader(user);
@@ -192,6 +207,8 @@ public class ProgressionService {
         if (!force && !ProgressionRules.bankrupt(profile.stats())) {
             throw new ConflictException("Ton portefeuille n'est pas vide : tu peux encore jouer.");
         }
+        wallet.setTo(user.getId(), java.math.BigDecimal.valueOf(ProgressionRules.START_BALANCE), WalletService.Reason.RESTART);
+        profile = profileFor(user.getId());
         profile.setStats(Stats.fresh());
         profile.setPeakBalance(ProgressionRules.START_BALANCE);
         profile.setLevel(UserLevel.DEBUTANT);
@@ -209,14 +226,9 @@ public class ProgressionService {
         }
     }
 
+    /** Profil du jeu (cree au besoin) dont la copie du solde suit le solde unique. */
     private TraderProfile profileFor(Long userId) {
-        return profileRepository.findByUserId(userId).orElseGet(() -> {
-            TraderProfile p = TraderProfile.builder()
-                    .userId(userId).level(UserLevel.DEBUTANT).bestLevel(UserLevel.DEBUTANT)
-                    .updatedAt(Instant.now()).build();
-            p.setStats(Stats.fresh());
-            return profileRepository.save(p);
-        });
+        return wallet.profile(userId);
     }
 
     private void syncUserLevel(Long userId, UserLevel level) {
@@ -234,7 +246,7 @@ public class ProgressionService {
             return "Marché déjà joué : c'était un entraînement, ton portefeuille ne change pas.";
         }
         if (ProgressionRules.bankrupt(p.stats())) {
-            return "Ton portefeuille est vide. Recommence avec 1 000 $ au niveau Débutant.";
+            return String.format(java.util.Locale.FRANCE, "Ton portefeuille est vide. Recommence avec %,.0f $ au niveau Débutant.", ProgressionRules.START_BALANCE);
         }
         if (up) return "Bravo ! Tu passes au niveau " + label(level) + " : l'application devient plus difficile.";
         if (down) return "Tu redescends au niveau " + label(level) + " : l'application redevient plus facile.";
@@ -245,7 +257,8 @@ public class ProgressionService {
     private void notifyAfterGame(Long userId, boolean up, boolean down, UserLevel level, TraderProfile p) {
         if (ProgressionRules.bankrupt(p.stats())) {
             notifications.notify(userId, tn.esprit.marketsim.notification.Notification.Type.BANKRUPT, "Portefeuille vide",
-                    "Ton portefeuille est passé sous 100 $. Recommence avec 1 000 $ au niveau Débutant (clique sur ton niveau en haut à droite).",
+                    String.format(java.util.Locale.FRANCE, "Ton portefeuille est passé sous %,.0f $. Recommence avec %,.0f $ au niveau Débutant (clique sur ton niveau en haut à droite).",
+                            ProgressionRules.BANKRUPT_THRESHOLD, ProgressionRules.START_BALANCE),
                     "/progression");
         } else if (up) {
             notifications.notify(userId, tn.esprit.marketsim.notification.Notification.Type.LEVEL_UP, "Nouveau niveau : " + label(level),
@@ -254,7 +267,7 @@ public class ProgressionService {
             notifications.notify(userId, tn.esprit.marketsim.notification.Notification.Type.LEVEL_DOWN, "Retour au niveau " + label(level),
                     "Ton portefeuille ou ton score ne remplit plus les conditions du niveau précédent. L'application redevient plus facile.",
                     "/progression");
-        } else if (p.getBalance() < 300) {
+        } else if (p.getBalance() < ProgressionRules.LOW_BALANCE_THRESHOLD) {
             notifications.notify(userId, tn.esprit.marketsim.notification.Notification.Type.LOW_BALANCE, "Portefeuille bas",
                     String.format(java.util.Locale.FRANCE, "Il te reste %,.2f $. Achète par petites tranches et respecte le stop-loss.", p.getBalance()),
                     "/progression");

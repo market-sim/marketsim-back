@@ -27,6 +27,8 @@ public class LeaderboardService {
     private final TraderProfileRepository profileRepository;
     private final TraderGameRepository gameRepository;
     private final UserRepository userRepository;
+    /** Solde unique : la copie du profil est rafraichie avant le classement. */
+    private final WalletService wallet;
 
     /** Badge gagne : identifiant stable, libelle et explication. */
     public record Badge(String id, String label, String description) {
@@ -45,8 +47,10 @@ public class LeaderboardService {
         userRepository.findAll().forEach(u -> {
             if (u.getRole() != Role.ADMIN && u.isEnabled() && !Boolean.TRUE.equals(u.getDeleted())) users.put(u.getId(), u);
         });
+        // solde unique (users.virtual_balance) recopie dans chaque profil avant le tri
         List<TraderProfile> ranked = profileRepository.findAll().stream()
                 .filter(p -> users.containsKey(p.getUserId()) && p.getGames() > 0)
+                .map(p -> wallet.mirror(p, wallet.cashOf(users.get(p.getUserId()))))
                 .sorted(ORDER)
                 .toList();
         List<Entry> all = new ArrayList<>();
@@ -92,7 +96,7 @@ public class LeaderboardService {
         }
         if (gamesBeatingAgent >= 5) out.add(new Badge("BEAT_AGENT", "Plus fort que l'IA", "A battu l'agent sur 5 parties"));
         if (Math.max(p.getPeakBalance(), s.balance()) >= 2 * ProgressionRules.START_BALANCE) {
-            out.add(new Badge("DOUBLED", "Capital doublé", "A atteint 2 000 $ dans son portefeuille"));
+            out.add(new Badge("DOUBLED", "Capital doublé", "A doublé son capital de départ"));
         }
         if (p.getRestarts() > 0 && p.getLevel().ordinal() >= UserLevel.INTERMEDIAIRE.ordinal()) {
             out.add(new Badge("COMEBACK", "Phénix", "Ruiné une fois, il est remonté au moins Intermédiaire"));

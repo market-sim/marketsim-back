@@ -37,20 +37,22 @@ class AdminWalletServiceTest {
     @BeforeEach
     void setUp() {
         profile = TraderProfile.builder().userId(7L).level(UserLevel.INTERMEDIAIRE).bestLevel(UserLevel.INTERMEDIAIRE).build();
-        profile.setStats(new ProgressionRules.Stats(1500, 4, 12, 8, 0.6, 0.1, 11, 0.2));
-        when(profiles.findByUserId(7L)).thenReturn(Optional.of(profile));
-        when(profiles.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(users.findById(7L)).thenReturn(Optional.of(User.builder().id(7L).role(Role.USER).enabled(true).level(UserLevel.INTERMEDIAIRE).build()));
-        when(users.findById(1L)).thenReturn(Optional.of(admin));
-        service = new AdminWalletService(new WalletService(profiles, users), users, log, notifications);
+        profile.setStats(new ProgressionRules.Stats(150000, 4, 12, 8, 0.6, 0.1, 11, 0.2));
+        WalletFixture f = new WalletFixture();
+        profiles = f.profiles;
+        users = f.users;
+        f.account(User.builder().id(7L).role(Role.USER).enabled(true).level(UserLevel.INTERMEDIAIRE)
+                .virtualBalance(new java.math.BigDecimal("150000.00")).build(), profile);
+        f.account(admin, null);
+        service = new AdminWalletService(f.wallet, users, log, notifications);
     }
 
     @Test
     void setsBalanceRecomputesLevelLogsAndNotifies() {
-        WalletService.Adjustment a = service.setBalance(admin, 7L, new AdminWalletService.SetBalanceRequest(800.456, "correction bug"));
-        assertEquals(1500, a.before(), 1e-9);
-        assertEquals(800.46, a.after(), 1e-9);
-        assertEquals(UserLevel.DEBUTANT, a.levelAfter(), "sous 1 000 $ : retour Debutant");
+        WalletService.Adjustment a = service.setBalance(admin, 7L, new AdminWalletService.SetBalanceRequest(80000.456, "correction bug"));
+        assertEquals(150000, a.before(), 1e-9);
+        assertEquals(80000.46, a.after(), 1e-9);
+        assertEquals(UserLevel.DEBUTANT, a.levelAfter(), "sous le capital de depart : retour Debutant");
         verify(log).recordAfterCommit(eq(1L), eq(7L), eq(ActivityAction.ADMIN_SET_BALANCE), eq("OK"), any());
         verify(notifications).notify(eq(7L), any(), anyString(), anyString(), eq("/progression"));
     }
@@ -61,7 +63,7 @@ class AdminWalletServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.setBalance(admin, 7L, new AdminWalletService.SetBalanceRequest(-1.0, "test")));
         assertThrows(IllegalArgumentException.class, () -> service.setBalance(admin, 7L, new AdminWalletService.SetBalanceRequest(2_000_000.0, "test")));
         assertThrows(IllegalArgumentException.class, () -> service.setBalance(admin, 7L, new AdminWalletService.SetBalanceRequest(null, "test")));
-        assertEquals(1500, profile.getBalance(), 1e-9);
+        assertEquals(150000, profile.getBalance(), 1e-9);
         verify(log, never()).recordAfterCommit(any(), any(), any(), any(), any());
     }
 

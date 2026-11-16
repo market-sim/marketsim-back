@@ -245,7 +245,7 @@ public class AccountService {
     public void welcome(User user) {
         notifications.notify(user.getId(), tn.esprit.marketsim.notification.Notification.Type.INFO,
                 "Bienvenue sur MarketSim AI, " + user.getFirstName() + " ! 🎉",
-                "Tu commences avec 1 000 $ virtuels. Visite l'Académie pour apprendre en jouant, puis bats l'agent IA dans le Jeu de trading.",
+                "Tu commences avec 100 000 $ virtuels (un seul portefeuille pour le jeu et le trading). Visite l'Académie pour apprendre en jouant, puis bats l'agent IA dans le Jeu de trading.",
                 "/education");
     }
 

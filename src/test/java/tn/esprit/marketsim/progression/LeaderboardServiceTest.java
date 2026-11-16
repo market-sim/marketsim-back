@@ -26,8 +26,8 @@ class LeaderboardServiceTest {
 
     @Test
     void ranksBySkillAndHidesAdminsAndEmails() {
-        User yasmine = User.builder().id(1L).firstName("Yasmine").lastName("Sabbagh").email("y@x.tn").role(Role.USER).enabled(true).build();
-        User omar = User.builder().id(2L).firstName("Omar").lastName("Trabelsi").email("o@x.tn").role(Role.USER).enabled(true).build();
+        User yasmine = User.builder().id(1L).firstName("Yasmine").lastName("Sabbagh").email("y@x.tn").role(Role.USER).enabled(true).virtualBalance(new java.math.BigDecimal("210000")).build();
+        User omar = User.builder().id(2L).firstName("Omar").lastName("Trabelsi").email("o@x.tn").role(Role.USER).enabled(true).virtualBalance(new java.math.BigDecimal("90000")).build();
         User admin = User.builder().id(3L).firstName("Admin").lastName("M").email("a@x.tn").role(Role.ADMIN).enabled(true).build();
         UserRepository users = mock(UserRepository.class);
         when(users.findAll()).thenReturn(List.of(yasmine, omar, admin));
@@ -39,7 +39,7 @@ class LeaderboardServiceTest {
         TraderGameRepository games = mock(TraderGameRepository.class);
         when(games.findTop100ByUserIdOrderByPlayedAtDesc(any())).thenReturn(List.of());
 
-        var board = new LeaderboardService(profiles, games, users).leaderboard(omar, 50);
+        var board = new LeaderboardService(profiles, games, users, new WalletFixture().wallet).leaderboard(omar, 50);
         assertEquals(2, board.traders(), "l'admin n'est pas classe");
         assertEquals("Yasmine S.", board.top().get(0).displayName());
         assertEquals(1, board.top().get(0).rank());

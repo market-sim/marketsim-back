@@ -35,9 +35,19 @@ public class TraderProfile {
     @Column(nullable = false, unique = true)
     private Long userId;
 
-    /** Solde actuel en dollars virtuels (1 000 au depart). */
+    
+    /**
+     * COPIE du solde unique ({@code users.virtual_balance}), jamais de l'argent : rafraichie par {@link WalletService}
+     * et lue seulement par les regles de niveau.
+     */
     @Column(nullable = false)
     private double balance;
+
+    /**
+     * Ancien solde du jeu (base 1 000 $) avant la fusion des portefeuilles, garde pour l'historique. Null pour les
+     * comptes crees apres la fusion. Voir {@link WalletMigration}.
+     */
+    private Double legacyGameBalance;
 
     /** Meilleur solde atteint depuis le dernier depart. */
     private double peakBalance;

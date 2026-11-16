@@ -21,9 +21,15 @@ public final class ProgressionRules {
     private ProgressionRules() {
     }
 
-    public static final double START_BALANCE = 1000.0;
-    /** En dessous, le portefeuille ne permet plus de jouer : le trader doit recommencer a 1 000 $. */
-    public static final double BANKRUPT_THRESHOLD = 100.0;
+    /**
+     * Capital de depart UNIQUE (le meme que le trading du module 2, {@code trading.initial-capital}) : le jeu et le
+     * trading partagent un seul portefeuille, {@code users.virtual_balance}.
+     */
+    public static final double START_BALANCE = 100_000.0;
+    /** En dessous (1 % du depart), le portefeuille ne permet plus de jouer : le trader doit recommencer. */
+    public static final double BANKRUPT_THRESHOLD = START_BALANCE * 0.01;
+    /** Seuil d'alerte « portefeuille bas » (30 % du depart). */
+    public static final double LOW_BALANCE_THRESHOLD = START_BALANCE * 0.30;
 
     /** Statistiques cumulees depuis le dernier depart (ou redemarrage). */
     public record Stats(double balance, int games, int trades, int wins, double grossWin, double grossLoss,
