@@ -122,6 +122,28 @@ public final class TradingDtos {
             @Positive @Digits(integer = 13, fraction = 6) BigDecimal stopLoss) {
     }
 
+    /** Demande de suggestion de stop-loss / take-profit (rien n'est cree). */
+    public record SuggestProtectionRequest(
+            @NotBlank @Size(max = 32) String symbol,
+            @NotNull Side side,
+            OrderType orderType,
+            @NotNull @Positive @Digits(integer = 13, fraction = 6) BigDecimal quantity,
+            @Positive @Digits(integer = 13, fraction = 6) BigDecimal limitPrice) {
+    }
+
+    /**
+     * Stop-loss et take-profit proposes, avec leur explication.
+     *
+     * @param sigmaSource  REAL (serie de cours reelle) ou MODEL (volatilite par classe d'actif)
+     * @param maxLoss      perte estimee si le stop-loss est touche (frais d'entree et de sortie compris), en $
+     * @param expectedGain gain estime si le take-profit est touche (frais deduits), en $
+     */
+    public record ProtectionSuggestion(String symbol, Side side, BigDecimal entryPrice, BigDecimal stopLoss,
+                                       BigDecimal takeProfit, double sigmaDailyPct, double sigmaAnnualPct,
+                                       String sigmaSource, double sigmaMultiple, double rewardRisk,
+                                       BigDecimal maxLoss, BigDecimal expectedGain, String explanation) {
+    }
+
     public enum RiskLevel { LOW, MEDIUM, HIGH, BLOCKED }
 
     /**

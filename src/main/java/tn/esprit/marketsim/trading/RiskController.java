@@ -28,6 +28,12 @@ public class RiskController {
         return service.assess(user.getId(), request);
     }
 
+    /** Stop-loss et take-profit proposes selon la volatilite de l'actif, avec l'explication (rien n'est cree). */
+    @PostMapping("/suggest-protection")
+    public TradingDtos.ProtectionSuggestion suggestProtection(@Valid @RequestBody TradingDtos.SuggestProtectionRequest request) {
+        return service.suggestProtection(request);
+    }
+
     /** VaR 95/99 %, CVaR 95 %, expositions, concentration (HHI), diversification, drawdown. */
     @GetMapping("/portfolio")
     public PortfolioRiskResponse portfolio(@AuthenticationPrincipal User user) {

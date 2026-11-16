@@ -28,6 +28,8 @@ public class TradingProperties {
 
     private Engine engine = new Engine();
 
+    private Protection protection = new Protection();
+
     @Getter
     @Setter
     public static class Risk {
@@ -52,5 +54,17 @@ public class TradingProperties {
         private boolean enabled = true;
         /** Delai avant le premier balayage (ms). */
         private long initialDelayMs = 10000;
+    }
+
+    /** Suggestion automatique de stop-loss / take-profit selon la volatilite. */
+    @Getter
+    @Setter
+    public static class Protection {
+        /** Distance du stop-loss en ecarts-types journaliers (k · σ_jour · prix d'entree). */
+        private double sigmaMultiple = 2;
+        /** Ratio gain / risque du take-profit (distance TP = ratio × distance SL). */
+        private double rewardRisk = 2;
+        /** Distance minimale du stop-loss en % du prix (evite un SL colle au prix sur un actif tres calme). */
+        private double minDistancePct = 0.2;
     }
 }

@@ -58,6 +58,20 @@ public class RiskService {
     }
 
     /**
+     * Suggestion de stop-loss / take-profit selon la volatilite de l'actif (σ reelle si une serie existe, sinon
+     * σ de la classe d'actif). Entree de reference : prix courant (MARKET) ou prix limite / stop (LIMIT, STOP).
+     */
+    public TradingDtos.ProtectionSuggestion suggestProtection(TradingDtos.SuggestProtectionRequest req) {
+        String symbol = req.symbol().trim().toUpperCase(Locale.ROOT);
+        OrderType type = req.orderType() == null ? OrderType.MARKET : req.orderType();
+        OrderRules.validateType(type, type == OrderType.MARKET ? null : req.limitPrice());
+        BigDecimal reference = type == OrderType.MARKET ? prices.currentPrice(symbol) : Money.price(req.limitPrice());
+        VolatilityService.Profile vol = volatility.profile(PortfolioCalculator.key(symbol));
+        return ProtectionCalculator.suggest(symbol, req.side(), reference, OrderRules.normalizeQuantity(req.quantity()),
+                vol.sigmaAnnual(), vol.sigmaDaily(), vol.source(), props.getFeeRate(), props.getProtection());
+    }
+
+    /**
      * Evaluation d'un ordre pour un compte deja charge (utilisee aussi par la creation d'ordre, sous verrou).
      *
      * @param referencePrice prix courant (MARKET) ou niveau limite / stop (LIMIT, STOP)
