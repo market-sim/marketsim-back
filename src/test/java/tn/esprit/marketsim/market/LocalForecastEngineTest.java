@@ -62,4 +62,22 @@ class LocalForecastEngineTest {
     void historiqueTropCourt() {
         assertEquals("INSUFFICIENT_DATA", engine.forecast(series(10, 1, 0, 0, 4), 5, 0).path("status").asText());
     }
+
+    @Test
+    void mapeCalculeeSurLesMemesSeancesQueLesResidus() {
+        // serie qui part de 1 et monte a 100 : l'ancien calcul (residus / premiers prix) donnait des MAPE enormes
+        List<Double> s = new ArrayList<>();
+        for (int i = 0; i < 200; i++) s.add(1 + i * 0.5 + Math.sin(i) * 0.3);
+        double mape = engine.forecast(s, 5, 0).path("metrics").path("mape").asDouble();
+        assertTrue(mape > 0 && mape < 5, "MAPE realiste : " + mape);
+    }
+
+    @Test
+    void confianceDuSensEntre50Et95() {
+        assertEquals(0.5, PredictionService.directionConfidence(100, 100, 2.0, 5), 1e-9);
+        double faible = PredictionService.directionConfidence(100, 100.5, 2.0, 5);
+        double forte = PredictionService.directionConfidence(100, 110, 2.0, 5);
+        assertTrue(faible > 0.5 && faible < 0.6);
+        assertTrue(forte > 0.9 && forte <= 0.95);
+    }
 }

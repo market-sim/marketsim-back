@@ -40,6 +40,8 @@ public class PredictionService {
     private final MarketDataService marketDataService;
     private final ForecastClient forecastClient;
     private final FinancialSentimentService sentimentService;
+    /** Moteur de prevision local, utilise pour rejouer les predictions sur l'historique (backtest). */
+    private final LocalForecastEngine localEngine;
 
     private static final int    DEFAULT_HORIZON = 5;
     private static final int    MIN_HORIZON     = 1;
@@ -158,28 +160,21 @@ public class PredictionService {
         JsonNode metrics = result.path("metrics");
         Double mae = metrics.has("mae") ? metrics.get("mae").asDouble() : null;
         Double rmse = metrics.has("rmse") ? metrics.get("rmse").asDouble() : null;
-        // MAPE approximated from residuals
+        // MAPE : fourni par le moteur (erreur relative sur les seances de validation). A defaut, calcule ici en
+        // alignant chaque residu sur le prix reel du MEME jour (les residus sont ceux des dernieres seances).
         JsonNode residualsNode = result.path("residuals");
-        Double mape = null;
-        if (residualsNode.isArray() && residualsNode.size() > 0) {
-            double sum = 0; int cnt = 0;
-            for (JsonNode r : residualsNode) {
-                // residual stored as price diff; convert to pct using current price proxy
-            }
-            // compute MAPE from residuals / price
+        Double mape = metrics.has("mape") ? metrics.get("mape").asDouble() : null;
+        if (mape == null && residualsNode.isArray() && residualsNode.size() > 0) {
+            int r = residualsNode.size();
             double s = 0; int c = 0;
-            for (int i = 0; i < residualsNode.size(); i++) {
-                double res = residualsNode.get(i).asDouble();
-                double actual = (i + 1 < n) ? y[i + 1] : y[n - 1];
-                if (actual != 0.0) { s += Math.abs(res / actual); c++; }
+            for (int i = 0; i < r; i++) {
+                double actual = y[n - r + i];
+                if (actual != 0.0) { s += Math.abs(residualsNode.get(i).asDouble() / actual); c++; }
             }
             if (c > 0) mape = (s / c) * 100.0;
         }
 
-        // confidence from in-sample RMSE proxy (provided by service candidate rmse)
-        double cv = (currentPrice > 0 && rmse != null) ? (rmse / currentPrice) : 1.0;
-        double confidence = 1.0 / (1.0 + cv);
-        confidence = Math.max(0.1, Math.min(0.95, confidence));
+        double confidence = directionConfidence(currentPrice, targetPrice, rmse, h);
 
         // residuals for fan chart
         List<Double> residuals = new ArrayList<>();
@@ -272,6 +267,86 @@ public class PredictionService {
         return repository.save(prediction);
     }
 
+    /** Une prediction resolue (reelle ou rejouee sur l'historique). */
+    record Outcome(String direction, double confidence, boolean correct) {
+    }
+
+    record HistoricalRun(List<Outcome> outcomes, int horizon, LocalDate from, LocalDate to, String source, Instant at) {
+    }
+
+    static final int HIST_HORIZON = DEFAULT_HORIZON;
+    static final int HIST_ORIGINS = 40;
+    private final java.util.Map<String, HistoricalRun> historicalCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Backtest walk-forward sur l'historique REEL : a {@value #HIST_ORIGINS} dates passees (une tous les
+     * {@value #HIST_HORIZON} jours de bourse), le moteur de prevision ne voit que les cours jusqu'a cette date, prevoit
+     * le sens a {@value #HIST_HORIZON} jours, puis on compare avec le cours reellement observe. Aucune donnee du futur
+     * n'est utilisee. Le sentiment n'est pas rejoue (pas d'historique d'actualites) : neutre. Cache 30 min.
+     */
+    HistoricalRun historical(String symbol) {
+        HistoricalRun cached = historicalCache.get(symbol.toUpperCase());
+        if (cached != null && cached.at().isAfter(Instant.now().minus(30, ChronoUnit.MINUTES))) return cached;
+        PriceSeries series;
+        try {
+            series = marketDataService.series(symbol);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (series == null || series.size() < MIN_POINTS + HIST_HORIZON * 2) return null;
+        double[] y = series.closes();
+        int n = y.length;
+        List<Outcome> out = new ArrayList<>();
+        LocalDate first = null;
+        LocalDate last = null;
+        for (int k = HIST_ORIGINS; k >= 1; k--) {
+            int origin = n - 1 - k * HIST_HORIZON;          // dernier cours connu a la date de la prevision
+            if (origin < MIN_POINTS) continue;
+            int from = Math.max(0, origin + 1 - 200);
+            List<Double> window = new ArrayList<>();
+            for (int i = from; i <= origin; i++) window.add(y[i]);
+            JsonNode r = localEngine.forecast(window, HIST_HORIZON, 0);
+            if (!"ANALYZED".equals(r.path("status").asText())) continue;
+            double current = y[origin];
+            double target = r.path("forecast").get(HIST_HORIZON - 1).path("value").asDouble();
+            double rmse = r.path("metrics").path("rmse").asDouble();
+            double ratio = target / current;
+            String dir = ratio > 1.001 ? "UP" : ratio < 0.999 ? "DOWN" : "FLAT";
+            double change = (y[origin + HIST_HORIZON] - current) / current;
+            boolean ok = switch (dir) {
+                case "UP" -> change > 0;
+                case "DOWN" -> change < 0;
+                default -> Math.abs(change) < 0.02;
+            };
+            out.add(new Outcome(dir, directionConfidence(current, target, rmse, HIST_HORIZON), ok));
+            if (first == null) first = series.dates()[origin];
+            last = series.dates()[origin + HIST_HORIZON];
+        }
+        HistoricalRun run = new HistoricalRun(out, HIST_HORIZON, first, last, series.source(), Instant.now());
+        historicalCache.put(symbol.toUpperCase(), run);
+        return run;
+    }
+
+    /**
+     * Confiance dans le SENS prevu : probabilite (loi normale) que le prix final soit du bon cote du prix actuel,
+     * avec une erreur de prevision d'ecart-type RMSE·√h. Entre 50 % (ecart prevu noye dans le bruit) et 95 %.
+     * (L'ancienne formule 1 / (1 + RMSE/prix) donnait presque toujours 95 %, ce qui rendait la calibration inutile.)
+     */
+    static double directionConfidence(double current, double target, Double rmse, int h) {
+        if (rmse == null || !(rmse > 0) || current <= 0) return 0.5;
+        double z = Math.abs(target - current) / (rmse * Math.sqrt(Math.max(1, h)));
+        double p = 0.5 * (1 + erf(z / Math.sqrt(2)));
+        return Math.max(0.5, Math.min(0.95, p));
+    }
+
+    /** Fonction d'erreur (approximation d'Abramowitz et Stegun, erreur < 1,5e-7). */
+    static double erf(double x) {
+        double t = 1 / (1 + 0.3275911 * Math.abs(x));
+        double y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t
+                * Math.exp(-x * x);
+        return x >= 0 ? y : -y;
+    }
+
     // ─── Backtesting & calibration ────────────────────────────────────────
 
     public PredictionBacktest backtest(String symbol) {
@@ -280,8 +355,30 @@ public class PredictionService {
                 : repository.findBySymbolIgnoreCaseOrderByGeneratedAtDesc(symbol);
 
         PredictionBacktest bt = new PredictionBacktest();
-        bt.setTotal(list.size());
-        int resolved = 0, correct = 0, pending = 0;
+        // Resultats : predictions reelles resolues + predictions REJOUEES sur l'historique reel (walk-forward).
+        // Sans ces dernieres, le bloc reste vide tant que l'horizon des predictions n'est pas ecoule.
+        List<Outcome> outcomes = new ArrayList<>();
+        int pending = 0;
+        int liveResolved = 0;
+        for (MarketPrediction p : list) {
+            if (p.getOutcome() == null) { pending++; continue; }
+            liveResolved++;
+            outcomes.add(new Outcome(p.getDirection().name(), p.getConfidence() == null ? 0.0 : p.getConfidence(),
+                    p.getOutcome() == MarketPrediction.Outcome.CORRECT));
+        }
+        HistoricalRun hist = (symbol == null || symbol.isBlank()) ? null : historical(symbol.trim());
+        if (hist != null) {
+            outcomes.addAll(hist.outcomes());
+            bt.setHistoricalCount(hist.outcomes().size());
+            bt.setHistoricalHorizon(hist.horizon());
+            bt.setHistoricalFrom(hist.from());
+            bt.setHistoricalTo(hist.to());
+            bt.setHistoricalSource(hist.source());
+        }
+        bt.setLiveResolved(liveResolved);
+        bt.setTotal(list.size() + (hist == null ? 0 : hist.outcomes().size()));
+
+        int resolved = 0, correct = 0;
         double brierSum = 0;
         java.util.Map<String, PredictionBacktest.DirectionStat> byDir = new java.util.HashMap<>();
         // calibration bins of width 0.1
@@ -290,21 +387,18 @@ public class PredictionService {
         double[] binConfSum = new double[bins];
         int[] binCorrect = new int[bins];
 
-        for (MarketPrediction p : list) {
-            if (p.getOutcome() == null) { pending++; continue; }
+        for (Outcome o : outcomes) {
             resolved++;
-            boolean ok = (p.getOutcome() == MarketPrediction.Outcome.CORRECT);
+            boolean ok = o.correct();
             if (ok) correct++;
-            double conf = (p.getConfidence() == null) ? 0.0 : p.getConfidence();
+            double conf = o.confidence();
             brierSum += (conf - (ok ? 1.0 : 0.0)) * (conf - (ok ? 1.0 : 0.0));
 
-            String dir = p.getDirection().name();
-            PredictionBacktest.DirectionStat ds = byDir.computeIfAbsent(dir, k -> new PredictionBacktest.DirectionStat());
+            PredictionBacktest.DirectionStat ds = byDir.computeIfAbsent(o.direction(), k -> new PredictionBacktest.DirectionStat());
             ds.setTotal(ds.getTotal() + 1);
             if (ok) ds.setCorrect(ds.getCorrect() + 1);
 
             int bi = (int) Math.min(bins - 1, Math.max(0, conf * bins));
-            if (bi == bins) bi = bins - 1;
             binCount[bi]++;
             binConfSum[bi] += conf;
             if (ok) binCorrect[bi]++;

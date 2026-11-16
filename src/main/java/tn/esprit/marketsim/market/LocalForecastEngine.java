@@ -41,7 +41,7 @@ public class LocalForecastEngine {
         double[] forecast(double[] y, int h);
     }
 
-    record Candidate(String name, double mae, double rmse, double[] residuals) {
+    record Candidate(String name, double mae, double rmse, double mape, double[] residuals) {
     }
 
     public ObjectNode forecast(List<Double> prices, int horizon, double sentimentScore) {
@@ -62,6 +62,7 @@ public class LocalForecastEngine {
             double[] res = new double[validation];
             double abs = 0;
             double sq = 0;
+            double pct = 0;
             for (int k = 0; k < validation; k++) {
                 int t = n - validation + k;          // on prevoit y[t] avec y[0..t-1]
                 double[] train = java.util.Arrays.copyOf(y, t);
@@ -70,8 +71,9 @@ public class LocalForecastEngine {
                 res[k] = e;
                 abs += Math.abs(e);
                 sq += e * e;
+                pct += y[t] != 0 ? Math.abs(e / y[t]) : 0;
             }
-            candidates.add(new Candidate(names[m], abs / validation, Math.sqrt(sq / validation), res));
+            candidates.add(new Candidate(names[m], abs / validation, Math.sqrt(sq / validation), pct / validation * 100, res));
         }
         Candidate bestBase = candidates.stream().min(Comparator.comparingDouble(Candidate::mae)).orElseThrow();
         Model baseModel = base[java.util.Arrays.asList(names).indexOf(bestBase.name())];
@@ -86,14 +88,16 @@ public class LocalForecastEngine {
             double[] res = new double[validation];
             double abs = 0;
             double sq = 0;
+            double pct = 0;
             for (int k = 0; k < validation; k++) {
                 int t = n - validation + k;
                 double e = y[t] - adjusted.forecast(java.util.Arrays.copyOf(y, t), 1)[0];
                 res[k] = e;
                 abs += Math.abs(e);
                 sq += e * e;
+                pct += y[t] != 0 ? Math.abs(e / y[t]) : 0;
             }
-            candidates.add(new Candidate("sentiment_adjusted", abs / validation, Math.sqrt(sq / validation), res));
+            candidates.add(new Candidate("sentiment_adjusted", abs / validation, Math.sqrt(sq / validation), pct / validation * 100, res));
         }
         Candidate best = candidates.stream().min(Comparator.comparingDouble(Candidate::mae)).orElseThrow();
         boolean withSentiment = "sentiment_adjusted".equals(best.name());
@@ -114,6 +118,8 @@ public class LocalForecastEngine {
         ObjectNode metrics = out.putObject("metrics");
         metrics.put("mae", round6(best.mae()));
         metrics.put("rmse", round6(best.rmse()));
+        // MAPE sur les memes seances de validation (erreur relative au prix reel de chaque jour)
+        metrics.put("mape", round6(best.mape()));
         ArrayNode r = out.putArray("residuals");
         for (double e : best.residuals()) r.add(round6(e));
         ArrayNode c = out.putArray("candidates");

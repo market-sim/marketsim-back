@@ -28,6 +28,14 @@ public class PredictionBacktest {
 
     /** Bins de calibration : confiance prédite vs taux de réussite réel. */
     private List<CalibrationBin> calibration;
+    /** Predictions reelles deja resolues (horizon ecoule). */
+    private int liveResolved;
+    /** Predictions rejouees sur l'historique reel (walk-forward, sans donnee du futur). */
+    private int historicalCount;
+    private Integer historicalHorizon;
+    private java.time.LocalDate historicalFrom;
+    private java.time.LocalDate historicalTo;
+    private String historicalSource;
 
     @Data
     @NoArgsConstructor
