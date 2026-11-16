@@ -21,6 +21,8 @@ public class FinBertHttpClient implements FinancialNlpClient {
     private final String endpoint;
     private final String expectedModelName;
     private final String expectedModelVersion;
+    /** Revision reellement servie par le service FinBERT si elle differe de la configuration. */
+    private volatile String servedVersion;
     private final Duration timeout;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -38,6 +40,11 @@ public class FinBertHttpClient implements FinancialNlpClient {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
                 .build();
+    }
+
+    @Override
+    public String modelVersion() {
+        return servedVersion != null ? servedVersion : expectedModelVersion;
     }
 
     @Override
@@ -85,13 +92,16 @@ public class FinBertHttpClient implements FinancialNlpClient {
             if (Math.abs(score - (positive - negative)) > 0.01) {
                 throw new IllegalArgumentException("Inconsistent sentiment score");
             }
-            if (!expectedModelName.equals(requiredText(body, "modelName"))
-                    || !expectedModelVersion.equals(requiredText(body, "modelVersion"))) {
+            // Le modele doit etre FinBERT. La revision attendue est celle de la configuration ; si le service a du
+            // charger une autre revision (revision epinglee introuvable sur Hugging Face), on garde la VRAIE
+            // revision utilisee, pour que la tracabilite reste exacte.
+            if (!expectedModelName.equals(requiredText(body, "modelName"))) {
                 throw new IllegalArgumentException("Unexpected model identity");
             }
-
+            String version = requiredText(body, "modelVersion");
+            if (!expectedModelVersion.equals(version)) servedVersion = version;
             return new NlpResult(status, label, positive, negative, neutral, positive - negative,
-                    expectedModelName, expectedModelVersion, analyzedAt, null);
+                    expectedModelName, version, analyzedAt, null);
         } catch (Exception ex) {
             return NlpResult.unavailable("NLP_INVALID_RESPONSE");
         }

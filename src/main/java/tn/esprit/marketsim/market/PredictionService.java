@@ -72,7 +72,8 @@ public class PredictionService {
     public List<PredictionModelInfo> models() {
         return List.of(new PredictionModelInfo(
                 "ensemble-arima-holt-naive", "Ensemble (ARIMA + Holt + naive)", "ensemble-v1",
-                "Service Python isolé : sélection automatique par walk-forward MAE/RMSE parmi ARIMA, Holt et naïf. "
+                (forecastClient.isRemoteAvailable() ? "Service Python isolé" : "Moteur local Java (service Python non lancé)")
+                        + " : sélection automatique par walk-forward MAE/RMSE parmi naïf, dérive, Holt et ARIMA(1,1,0). "
                         + "Données historiques réelles uniquement.", forecastClient.isAvailable()));
     }
 
@@ -233,6 +234,10 @@ public class PredictionService {
 
         String modelName = result.path("selectedModel").asText("ensemble");
         String modelVersion = result.path("modelVersion").asText("ensemble-v1");
+        // moteur qui a calcule (python / java-local), garde dans la version pour la tracabilite
+        if (result.has("engine") && !modelVersion.contains(result.path("engine").asText())) {
+            modelVersion = modelVersion + "+" + result.path("engine").asText();
+        }
 
         MarketPrediction prediction = new MarketPrediction();
         prediction.setSymbol(asset.getSymbol());

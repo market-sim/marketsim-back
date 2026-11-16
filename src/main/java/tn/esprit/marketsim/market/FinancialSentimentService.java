@@ -75,7 +75,7 @@ public class FinancialSentimentService {
             analysis.setNeutralProbability(decimal(result.neutralProbability()));
             analysis.setSentimentScore(decimal(result.positiveProbability() - result.negativeProbability()));
             analysis.setModelName(modelName);
-            analysis.setModelVersion(modelVersion);
+            analysis.setModelVersion(result.modelVersion() == null ? version() : result.modelVersion());
             analysis.setErrorCode(null);
         }
 
@@ -115,14 +115,14 @@ public class FinancialSentimentService {
 
     private List<MarketNewsAnalysis> latestSuccessful(String symbol, Instant start, Instant end) {
         return analysisRepository.findLatestSuccessfulForPeriod(symbol, start, end,
-                MarketSentimentStatus.ANALYZED, modelName, modelVersion);
+                MarketSentimentStatus.ANALYZED, modelName, version());
     }
 
     private SentimentSummaryResponse summarize(String symbol, int days, Instant start, Instant end,
                                                List<MarketNewsAnalysis> rows) {
         if (rows.isEmpty()) {
             return new SentimentSummaryResponse(symbol, days, start, end, 0,
-                    0, 0, 0, null, null, modelName, modelVersion,
+                    0, 0, 0, null, null, modelName, version(),
                     MarketSentimentStatus.INSUFFICIENT_DATA, List.of());
         }
 
@@ -137,7 +137,7 @@ public class FinancialSentimentService {
         double total = rows.size();
         return new SentimentSummaryResponse(symbol, days, start, end, rows.size(),
                 percentage(positive, total), percentage(negative, total), percentage(neutral, total),
-                overall, score, modelName, modelVersion, MarketSentimentStatus.ANALYZED, articles);
+                overall, score, modelName, version(), MarketSentimentStatus.ANALYZED, articles);
     }
 
     private SentimentSummaryResponse.ArticleAnalysis articleDto(MarketNewsAnalysis row) {
@@ -156,6 +156,12 @@ public class FinancialSentimentService {
         double score = rows.stream().mapToDouble(r -> r.getSentimentScore().doubleValue()).average().orElse(0);
         return new SentimentHistoryResponse.DailyPoint(date, rows.size(),
                 percentage(positive, total), percentage(negative, total), percentage(neutral, total), score);
+    }
+
+    /** Revision FinBERT en service (celle de la configuration, ou celle que le service a reellement chargee). */
+    private String version() {
+        String served = nlpClient.modelVersion();
+        return served != null ? served : modelVersion;
     }
 
     private static boolean validAnalysis(FinancialNlpClient.NlpResult result) {

@@ -7,6 +7,11 @@ public interface FinancialNlpClient {
 
     NlpResult analyze(String text);
 
+    /** Revision du modele actuellement servie (null = celle de la configuration). */
+    default String modelVersion() {
+        return null;
+    }
+
     record NlpResult(
             MarketSentimentStatus status,
             SentimentAnalyzer.Label sentimentLabel,

@@ -29,13 +29,31 @@ public class ForecastClient {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final ObjectMapper json = new ObjectMapper();
 
+    /** Moteur local (Java) utilise quand le service Python n'est pas lance : memes modeles, meme contrat JSON. */
+    private final LocalForecastEngine local;
+
     public ForecastClient(@Value("${app.market.forecast.base-url:http://127.0.0.1:8091}") String baseUrl,
-                         @Value("${app.market.forecast.timeout-ms:30000}") int timeoutMs) {
+                         @Value("${app.market.forecast.timeout-ms:30000}") int timeoutMs,
+                         LocalForecastEngine local) {
         this.baseUrl = baseUrl;
         this.timeoutMs = timeoutMs;
+        this.local = local;
     }
 
+    /**
+     * Prevision : service Python s'il repond, sinon moteur local Java (sur les memes donnees reelles). Le champ
+     * {@code engine} de la reponse indique lequel a calcule (python / java-local).
+     */
     public JsonNode forecast(List<Double> prices, List<String> dates, int horizon, double sentimentScore) {
+        try {
+            return remote(prices, dates, horizon, sentimentScore);
+        } catch (ModelUnavailableException e) {
+            log.info("Service de prevision Python indisponible : moteur local Java utilise");
+            return local.forecast(prices, horizon, sentimentScore);
+        }
+    }
+
+    private JsonNode remote(List<Double> prices, List<String> dates, int horizon, double sentimentScore) {
         try {
             StringBuilder sb = new StringBuilder("{\"prices\":[");
             for (int i = 0; i < prices.size(); i++) {
@@ -53,14 +71,22 @@ public class ForecastClient {
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("forecast service HTTP " + response.statusCode());
             }
-            return json.readTree(response.body());
+            JsonNode node = json.readTree(response.body());
+            if (node instanceof com.fasterxml.jackson.databind.node.ObjectNode o && !o.has("engine")) o.put("engine", "python");
+            return node;
         } catch (Exception e) {
             log.warn("Forecast service unavailable: {}", e.getMessage());
             throw new ModelUnavailableException("Service de prévision indisponible : " + e.getMessage(), e);
         }
     }
 
+    /** Toujours vrai : a defaut du service Python, le moteur local Java prend le relais. */
     public boolean isAvailable() {
+        return true;
+    }
+
+    /** Le service Python d'ensemble repond-il ? */
+    public boolean isRemoteAvailable() {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/health"))
                     .timeout(Duration.ofSeconds(5)).GET().build();
