@@ -19,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import tn.esprit.marketsim.common.NotFoundException;
+import tn.esprit.marketsim.progression.ProgressionService;
 import tn.esprit.marketsim.user.Role;
 import tn.esprit.marketsim.user.User;
 import tn.esprit.marketsim.user.UserLevel;
@@ -34,6 +35,8 @@ class UserLevelServiceTest {
     private UserLevelFeatureExtractor featureExtractor;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private ProgressionService progressionService;
     @InjectMocks
     private UserLevelService service;
 
@@ -103,6 +106,69 @@ class UserLevelServiceTest {
         assertEquals(Instant.parse("2026-10-19T12:00:00Z"), level.computedAt());
         verify(featureExtractor, never()).extract(any(), any(), any());
         verify(assessmentRepository, never()).save(any());
+    }
+
+    @Test
+    void lesDeuxNiveauxSontCalculesIndependammentEtLeNiveauDuJeuEstAffiche() {
+        User user = user(UserLevel.DEBUTANT);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+        when(assessmentRepository.findByUserId(5L)).thenReturn(Optional.empty());
+        // activite tres faible pour le modele IA...
+        when(featureExtractor.extract(any(), any(), any())).thenReturn(
+                new UserLevelFeatures(0.1, 0.05, 0.1, 0.05, 0.05, 0.05, 0.05, 0.05, 12));
+        // ... mais Expert dans le jeu avec un score de competence de 88
+        when(progressionService.tradingAssessment(5L))
+                .thenReturn(Optional.of(new ProgressionService.TradingAssessment(UserLevel.EXPERT, 88)));
+
+        UserLevelResponse r = service.recomputeOwn(5L);
+        // le niveau IA reste visible, avec SON score
+        assertEquals(UserLevelModel.levelForScore(r.activityScore()), r.activityLevel());
+        assertTrue(r.activityScore() < 50);
+        // le niveau du jeu aussi
+        assertEquals(UserLevel.EXPERT, r.tradingLevel());
+        assertEquals(88, r.tradingScore());
+        // regle d'affichage : le jeu, et le score qui va avec (plus de « score 30 / Expert »)
+        assertEquals("TRADING", r.levelSource());
+        assertEquals(UserLevel.EXPERT, r.level());
+        assertEquals(88, r.score());
+        assertEquals(UserLevel.EXPERT, user.getLevel());
+        assertEquals(UserLevelService.DISPLAY_RULE, r.displayRule());
+        assertEquals("TRADING_PROGRESSION", r.reasonCodes().get(0));
+    }
+
+    @Test
+    void sansProfilDeTraderLeNiveauIAEstAfficheAvecSonScore() {
+        User user = user(UserLevel.DEBUTANT);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
+        when(assessmentRepository.findByUserId(6L)).thenReturn(Optional.empty());
+        when(featureExtractor.extract(any(), any(), any())).thenReturn(
+                new UserLevelFeatures(0.9, 0.8, 0.9, 0.85, 0.8, 0.8, 0.8, 0.8, 12));
+        when(progressionService.tradingAssessment(6L)).thenReturn(Optional.empty());
+
+        UserLevelResponse r = service.recomputeOwn(6L);
+        assertEquals("ACTIVITY", r.levelSource());
+        assertNull(r.tradingLevel());
+        assertEquals(r.activityLevel(), r.level());
+        assertEquals(r.activityScore(), r.score());
+        assertEquals(UserLevelModel.levelForScore(r.score()), r.level());
+    }
+
+    @Test
+    void profilDeTraderSansActiviteSuffisante() {
+        User user = user(UserLevel.DEBUTANT);
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        when(assessmentRepository.findByUserId(7L)).thenReturn(Optional.empty());
+        when(featureExtractor.extract(any(), any(), any())).thenReturn(quiet());
+        when(progressionService.tradingAssessment(7L))
+                .thenReturn(Optional.of(new ProgressionService.TradingAssessment(UserLevel.INTERMEDIAIRE, 41)));
+
+        UserLevelResponse r = service.recomputeOwn(7L);
+        assertNull(r.activityLevel());
+        assertNull(r.activityScore());
+        assertEquals(UserLevel.INTERMEDIAIRE, r.level());
+        assertEquals(41, r.score());
+        assertEquals(false, r.insufficientEvidence());
+        assertEquals(UserLevel.INTERMEDIAIRE, user.getLevel());
     }
 
     private static User user(UserLevel level) {

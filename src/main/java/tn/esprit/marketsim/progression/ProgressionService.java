@@ -62,6 +62,20 @@ public class ProgressionService {
         return profileRepository.findByUserId(user.getId()).map(this::toResponse);
     }
 
+    /** Niveau de trading et score de competence (0-100) qui l'accompagne. */
+    public record TradingAssessment(UserLevel level, int skillScore) {
+    }
+
+    /** Niveau de trading et score de competence du joueur s'il a un profil (module 1), sinon vide. Jamais pour l'admin. */
+    @Transactional(readOnly = true)
+    public Optional<TradingAssessment> tradingAssessment(Long userId) {
+        boolean admin = userRepository.findById(userId).map(u -> u.getRole() == Role.ADMIN).orElse(false);
+        if (admin) return Optional.empty();
+        return profileRepository.findByUserId(userId)
+                .filter(p -> p.getLevel() != null)
+                .map(p -> new TradingAssessment(p.getLevel(), ProgressionRules.skillScore(p.stats())));
+    }
+
     /** Niveau de trading du joueur s'il a deja joue, sinon vide (utilise par le module 1). */
     @Transactional(readOnly = true)
     public Optional<UserLevel> tradingLevel(Long userId) {
