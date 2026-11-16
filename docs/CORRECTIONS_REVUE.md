@@ -125,3 +125,17 @@ Pour l'étape 5, le niveau Intermédiaire (exigé par le pilote) a été donné 
 - **Module 5** : prédictions LSTM / Prophet, historique des prédictions, vrai NLP des actualités (branche `module5-market-prediction-sentiment`).
 - **Module 7** : stress tests et actuariat réels (résultats des banques).
 - **Blockchain** : ancrage du registre sur Ethereum Sepolia ou Hyperledger Fabric, certificats.
+
+## Ajout : intégration du module 5 (branche `module5-market-prediction-sentiment`)
+
+- Repris par cherry-pick (auteurs conservés) : back `027c409`, `d3c0650` ; front `8dc2147`, `1391c03`, `8403614`.
+- **Écarté** : le commit « initial snapshot from GitHub download » des deux dépôts. Basé sur une ancienne copie,
+  il supprimait environ 15 000 lignes (modules 1, 2 et 6) ; le fusionner tel quel aurait effacé ce travail.
+- Gardé de `main` : `pom.xml` (la branche remplaçait la configuration du compilateur).
+- Corrigé : actualités inventées au démarrage (titres attribués à Bloomberg, Reuters…) supprimées ; prédictions
+  initiales en tâche de fond ; ligne dupliquée dans `MarketPage.tsx` qui empêchait la compilation.
+- La page Marché est celle du module 5 ; ses prix suivent le moteur de prix (relus chaque seconde).
+- **Limite** : les prédictions (ensemble ARIMA + Holt + naïf, port 8091) et FinBERT (port 8090) appellent des
+  services Python qui ne sont dans aucun des deux dépôts. Sans eux, la page l'affiche honnêtement
+  (« Indisponible », aucune fausse prédiction) ; le sentiment des actualités se replie sur l'analyse lexicale.
+- Tests : 310 tests back verts (dont ceux du module 5), front : types, build et tests de logique verts.
