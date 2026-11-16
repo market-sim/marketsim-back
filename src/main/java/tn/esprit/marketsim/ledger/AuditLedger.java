@@ -70,6 +70,12 @@ public class AuditLedger {
         this.blocks = blocks;
         this.tx = new TransactionTemplate(txManager);
         this.secret = secret;
+        if (secret == null || secret.contains("dev-secret-change-me")) {
+            // Valeur de developpement connue de tous (elle est dans le depot) : n'importe qui peut resceller un bloc.
+            // Elle n'est pas remplacee automatiquement, sinon les blocs deja scelles ne se verifieraient plus.
+            log.warn("LEDGER_SECRET absent : le registre d'audit utilise le secret de developpement public. "
+                    + "Definir LEDGER_SECRET en production (avant le premier bloc).");
+        }
         this.demoTamper = demoTamper;
         this.sealIntervalMs = sealIntervalMs;
     }

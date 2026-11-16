@@ -11,8 +11,11 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
+import tn.esprit.marketsim.config.Secrets;
 import tn.esprit.marketsim.user.User;
 
+@Slf4j
 @Service
 public class JwtService {
 
@@ -26,9 +29,16 @@ public class JwtService {
     private final SecretKey key;
     private final long expirationMs;
 
-    public JwtService(@Value("${app.jwt.secret}") String secret,
+    public JwtService(@Value("${app.jwt.secret:}") String secret,
                       @Value("${app.jwt.expiration-ms}") long expirationMs) {
-        this.key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
+        if (Secrets.isBlank(secret)) {
+            // Pas de secret configure : on en genere un, jamais ecrit nulle part. Consequence : tous les jetons
+            // deviennent invalides au prochain redemarrage (les utilisateurs doivent se reconnecter).
+            log.warn("JWT_SECRET absent : secret JWT aleatoire genere pour cette execution. Les jetons ne survivront "
+                    + "pas a un redemarrage. Definir JWT_SECRET (openssl rand -base64 48) en production.");
+            secret = Secrets.randomJwtSecret();
+        }
+        this.key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret.trim()));
         this.expirationMs = expirationMs;
     }
 

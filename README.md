@@ -32,9 +32,33 @@ Le frontend React est dans un autre repo : `marketsim-frontend`.
 
 ### Compte admin créé automatiquement
 
-| Email | Mot de passe |
-|---|---|
-| `admin@marketsim.tn` | `admin123` |
+Au premier lancement (base vide), un compte admin `admin@marketsim.tn` est créé :
+
+- si la variable d'environnement `ADMIN_PASSWORD` est définie, c'est son mot de passe ;
+- sinon un mot de passe **aléatoire** est généré et affiché **une seule fois** dans les logs du démarrage
+  (encadré « Compte admin cree »). Note-le tout de suite.
+
+Le mot de passe d'un admin **déjà existant** n'est jamais modifié (une base locale existante garde le sien).
+
+## Variables d'environnement (secrets)
+
+Aucun secret n'est dans le dépôt. Les valeurs se donnent par variables d'environnement, ou en local dans
+`config/application.properties` (ignoré par Git, voir `config/application.properties.example`).
+
+| Variable | Rôle | Si absente |
+|---|---|---|
+| `JWT_SECRET` | Signature des jetons de connexion (Base64, ≥ 256 bits : `openssl rand -base64 48`) | Secret aléatoire généré au démarrage : les jetons ne survivent pas à un redémarrage |
+| `ADMIN_PASSWORD` | Mot de passe du compte admin à sa création | Mot de passe aléatoire affiché une fois dans les logs |
+| `LEDGER_SECRET` | Scellement HMAC des blocs du registre d'audit | Secret de développement public (avertissement dans les logs). À définir **avant** le premier bloc : le changer ensuite invalide la vérification des anciens blocs |
+| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET` | reCAPTCHA v2 (connexion, inscription, mot de passe oublié) | Clés de **test publiques de Google** : elles valident tout. À remplacer en production. Vides toutes les deux = reCAPTCHA désactivé (tests locaux uniquement) |
+| `RECAPTCHA_FAIL_OPEN` | Laisser passer si Google est injoignable | `false` |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SECURITY`, `MAIL_FROM` | Envoi réel des e-mails (SMTP) | Pas d'envoi : les e-mails restent dans la boîte d'envoi de l'admin |
+| `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS` | Passkeys (domaine et origines du frontend) | `localhost`, `http://localhost:5173` |
+| `ANTHROPIC_API_KEY` | Assistant IA (Claude) du module 6 | Assistant en mode hors ligne |
+
+> ⚠️ Un ancien secret JWT et le mot de passe `admin123` ont été commités dans l'historique Git avant cette
+> correction : ils doivent être considérés comme **compromis**. Ne réutilise jamais cet ancien secret, et change
+> le mot de passe des comptes admin créés avec `admin123`.
 
 Au premier lancement, des données de démo sont aussi ajoutées (actifs, cours, scénarios de stress).
 
@@ -83,7 +107,7 @@ Toutes les routes (sauf `/api/auth/**`) demandent le header `Authorization: Bear
 Test rapide (Postman ou curl) :
 
 ```bash
-curl -X POST http://localhost:8081/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"admin@marketsim.tn\",\"password\":\"admin123\"}"
+curl -X POST http://localhost:8081/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"admin@marketsim.tn\",\"password\":\"TON_MOT_DE_PASSE_ADMIN\"}"
 ```
 
 ## Travailler à plusieurs avec Git

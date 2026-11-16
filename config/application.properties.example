@@ -17,3 +17,11 @@ app.mail.from=no-reply@marketsim.tn
 # app.mail.smtp.password=xxxx xxxx xxxx xxxx
 # app.mail.smtp.security=STARTTLS
 # app.mail.from=ton.adresse@gmail.com
+#
+# --- Secrets locaux (facultatif) : sinon variables d'environnement, voir le README ---
+# Secret JWT fixe (les connexions survivent aux redemarrages) : openssl rand -base64 48
+# app.jwt.secret=COLLE_ICI_UN_SECRET_BASE64
+# Mot de passe du compte admin a sa creation (base vide uniquement)
+# app.admin.password=CHOISIS_UN_MOT_DE_PASSE
+# Secret du registre d'audit (a fixer avant le premier bloc)
+# app.ledger.secret=COLLE_ICI_UN_SECRET

@@ -36,7 +36,7 @@ public class DataInitializer implements CommandLineRunner {
     @Value("${app.admin.email}")
     private String adminEmail;
 
-    @Value("${app.admin.password}")
+    @Value("${app.admin.password:}")
     private String adminPassword;
 
     @Override
@@ -44,15 +44,25 @@ public class DataInitializer implements CommandLineRunner {
         settingsService.getOrCreate();
 
         if (!userRepository.existsByEmail(adminEmail)) {
+            // Mot de passe depuis ADMIN_PASSWORD ; sinon aleatoire, affiche une seule fois (a la creation).
+            boolean generated = Secrets.isBlank(adminPassword);
+            String password = generated ? Secrets.randomPassword(16) : adminPassword;
             userRepository.save(User.builder()
                     .firstName("Admin")
                     .lastName("MarketSim")
                     .email(adminEmail)
-                    .password(passwordEncoder.encode(adminPassword))
+                    .password(passwordEncoder.encode(password))
                     .role(Role.ADMIN)
                     .enabled(true)
                     .build());
-            log.info("Compte admin cree : {}", adminEmail);
+            if (generated) {
+                log.warn("\n========================================================================\n"
+                        + "  Compte admin cree : {}\n  Mot de passe genere (affiche UNE seule fois) : {}\n"
+                        + "  Note-le maintenant, ou definis ADMIN_PASSWORD avant le premier lancement.\n"
+                        + "========================================================================", adminEmail, password);
+            } else {
+                log.info("Compte admin cree : {} (mot de passe : variable ADMIN_PASSWORD)", adminEmail);
+            }
         }
 
         if (assetRepository.count() == 0) {
