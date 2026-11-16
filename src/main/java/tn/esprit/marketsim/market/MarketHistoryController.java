@@ -13,7 +13,7 @@ import lombok.RequiredArgsConstructor;
  * Module 5 — API des cours historiques réels des instruments de marché.
  *
  * <p>GET  /api/market/history?symbol=AAPL&amp;period=1M → consultation (authentifié)
- * <p>POST /api/market/history/refresh?symbol=AAPL       → actualisation depuis Yahoo Finance (ADMIN)
+ * <p>POST /api/market/history/refresh?symbol=AAPL       → actualisation depuis Yahoo Finance (utilisateur connecté)
  */
 @RestController
 @RequestMapping("/api/market/history")
@@ -35,10 +35,10 @@ public class MarketHistoryController {
     }
 
     /**
-     * Force l'actualisation depuis le fournisseur de cotations (ADMIN).
+     * Force l'actualisation depuis le fournisseur de cotations (tout utilisateur connecté).
      */
     @PostMapping("/refresh")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public MarketHistoryDto refresh(@RequestParam String symbol) {
         return historyService.refresh(symbol);
     }
