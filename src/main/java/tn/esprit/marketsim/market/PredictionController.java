@@ -22,7 +22,7 @@ import lombok.RequiredArgsConstructor;
  * GET  /api/market/predictions/{id}              → une prédiction par id
  * GET  /api/market/predictions/{id}/evaluation   → métriques d'évaluation
  * GET  /api/market/predictions/models            → modèles disponibles
- * POST /api/market/predictions/generate?symbol=AAPL&horizon=5 → générer (ADMIN)
+ * POST /api/market/predictions/generate?symbol=AAPL&horizon=5 → générer (utilisateur connecté)
  */
 @RestController
 @RequestMapping("/api/market/predictions")
@@ -61,7 +61,8 @@ public class PredictionController {
 
     @PostMapping("/generate")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('ADMIN')")
+    // ouvert a tout utilisateur connecte (avant : admin seulement, le trader ne voyait pas le bouton Generate)
+    @PreAuthorize("isAuthenticated()")
     public MarketPrediction generate(@RequestParam String symbol,
                                      @RequestParam(required = false) Integer horizon) {
         return service.generateFor(symbol, horizon);
