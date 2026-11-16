@@ -78,6 +78,11 @@ public class MarketTickerService {
         return current == null ? List.of() : current.quotes();
     }
 
+    /** Dernier bandeau connu (cours + date) sans jamais attendre le reseau ; null si jamais charge. */
+    public Ticker cachedTicker() {
+        return cache;
+    }
+
     public Ticker ticker() {
         Ticker current = cache;
         if (current != null && current.updatedAt().plus(CACHE_TTL).isAfter(Instant.now())) {

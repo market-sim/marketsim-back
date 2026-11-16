@@ -11,11 +11,9 @@ import tn.esprit.marketsim.market.Asset;
 /**
  * Implementation par defaut : le prix stocke dans {@link Asset#getPrice()} (module 5).
  * <p>
- * Limite connue : le bandeau live ({@code MarketTickerService}) n'est pas utilise. Il couvre d'autres symboles
- * (« OR » au lieu de « GOLD »...), fait des appels HTTP bloquants (jusqu'a 8 s) et n'est rafraichi que toutes les
- * 60 s : l'appeler depuis une transaction d'ordre ou depuis le moteur (toutes les 2 s) serait fragile. Tant que le
- * module 5 ne met pas a jour {@code Asset.price}, les prix sont statiques (l'admin peut les modifier via
- * {@code PUT /api/market/assets/{id}}, ce qui declenche SL/TP/LIMIT au balayage suivant).
+ * Ce prix evolue : le moteur de prix du module 5 ({@code market.MarketPriceEngine}) le met a jour toutes les 3 s,
+ * ancre sur les cours reels du bandeau quand ils sont disponibles. Le trading ne parle jamais au reseau : il lit
+ * seulement la base. L'admin peut toujours forcer un prix via {@code PUT /api/market/assets/{id}}.
  */
 @Component
 @RequiredArgsConstructor
