@@ -45,8 +45,11 @@ public final class BacktestDtos {
     public record Curves(LocalDate[] dates, double[] equity, double[] buyHold, double[] drawdown) {
     }
 
-    /** Courbes propres a une strategie dans une comparaison. */
-    public record ComparisonCurve(LocalDate[] dates, double[] equity, double[] drawdown) {
+    /**
+     * Courbes propres a une strategie dans une comparaison. Un point par seance, aux dates de
+     * {@link ComparisonResult#dates()} (communes a toutes les strategies, donc envoyees une seule fois).
+     */
+    public record ComparisonCurve(double[] equity, double[] drawdown) {
     }
 
     /** Resultat d'une strategie, avec son etat au moment de la comparaison. */

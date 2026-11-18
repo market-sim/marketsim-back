@@ -268,16 +268,76 @@ class BacktestServiceTest {
         assertEquals(2, result.strategies().size());
         assertEquals(sma.getId(), result.strategies().get(0).strategyId());
         assertEquals(rsi.getId(), result.strategies().get(1).strategyId());
-        for (var strategy : result.strategies()) {
-            assertEquals(300, strategy.curves().dates().length);
-            assertEquals(300, strategy.curves().equity().length);
-            assertEquals(300, strategy.curves().drawdown().length);
-            assertNotNull(strategy.train());
-            assertNotNull(strategy.test());
-            assertTrue(strategy.metrics().tradeCount() >= 0);
+
+        // chaque strategie donne exactement le resultat d'un backtest seul avec les memes reglages :
+        // la comparaison reutilise le moteur, elle ne refait aucun calcul de son cote
+        BacktestSettings settings = new BacktestSettings(5000, 0.002, 0.001, 0.05, 0.10, 0.8);
+        BacktestResult smaAlone = BacktestService.simulate(prices, StrategyType.SMA_CROSS, smaCross(5, 20), settings,
+                null, null, split);
+        BacktestResult rsiAlone = BacktestService.simulate(prices, StrategyType.RSI, params(StrategyType.RSI), settings,
+                null, null, split);
+        assertTrue(smaAlone.metrics().tradeCount() > 0, "le jeu de donnees doit produire des trades");
+        List<BacktestResult> alone = List.of(smaAlone, rsiAlone);
+        for (int i = 0; i < 2; i++) {
+            var compared = result.strategies().get(i);
+            BacktestResult expected = alone.get(i);
+            assertEquals(expected.metrics(), compared.metrics());
+            assertNotNull(compared.train());
+            assertNotNull(compared.test());
+            assertEquals(expected.train(), compared.train());
+            assertEquals(expected.test(), compared.test());
+            assertArrayEquals(expected.curves().equity(), compared.curves().equity());
+            assertArrayEquals(expected.curves().drawdown(), compared.curves().drawdown());
         }
-        verify(marketData).series("TEST");
+        // dates et buy & hold communs, envoyes une seule fois
+        assertArrayEquals(smaAlone.curves().dates(), result.dates());
+        assertArrayEquals(smaAlone.curves().buyHold(), result.buyHold());
+        assertArrayEquals(rsiAlone.curves().buyHold(), result.buyHold());
+
+        verify(marketData).series("TEST");     // un seul chargement des cours pour les deux strategies
         verify(repository, never()).save(any(Backtest.class));
+        verify(strategies, never()).recordBacktest(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void comparisonRejectsAStrategyWithoutTypeAndNamesIt() {
+        strategy(5L, "RSI", StrategyType.RSI);
+        strategy(6L, "Ancienne stratégie", null);
+
+        String message = messageOf(() -> service.compare(compareRequest(List.of(5L, 6L), null), user));
+
+        assertTrue(message.contains("Ancienne stratégie"), message);
+        assertTrue(message.contains("type"), message);
+        verify(marketData, never()).series(anyString());
+    }
+
+    @Test
+    void anInsufficientHistoryNamesTheStrategyInCause() {
+        // 60 seances : RSI(14) a assez d'historique, le croisement SMA(20,50) non (il lui faut 51 seances)
+        strategy(5L, "RSI rapide", StrategyType.RSI);
+        strategy(6L, "SMA lente", StrategyType.SMA_CROSS);
+        when(marketData.series("TEST")).thenReturn(wavy(60));
+
+        String message = messageOf(() -> service.compare(compareRequest(List.of(5L, 6L), null), user));
+
+        assertTrue(message.startsWith("« SMA lente » — "), message);
+        assertTrue(message.contains("historique insuffisant"), message);
+        assertTrue(message.contains("51"), message);
+    }
+
+    @Test
+    void anErrorCommonToAllStrategiesIsNotAttributedToOne() {
+        strategy(5L, "RSI rapide", StrategyType.RSI);
+        strategy(6L, "SMA lente", StrategyType.SMA_CROSS);
+        when(marketData.series("TEST")).thenReturn(wavy(300));
+        // 20 seances : trop court quelle que soit la strategie
+        CompareRequest req = new CompareRequest(List.of(5L, 6L), "TEST", START, START.plusDays(19),
+                null, null, null, null, null, null, null);
+
+        String message = messageOf(() -> service.compare(req, user));
+
+        assertTrue(message.startsWith("Période trop courte"), message);
+        assertTrue(!message.contains("RSI rapide") && !message.contains("SMA lente"), message);
     }
 
     @Test

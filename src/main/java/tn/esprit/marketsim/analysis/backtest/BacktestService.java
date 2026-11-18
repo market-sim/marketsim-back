@@ -46,6 +46,17 @@ public class BacktestService {
     /** Nombre minimum de seances pour qu'un backtest (ou une sous-periode) ait un sens. */
     static final int MIN_BARS = 30;
 
+    /**
+     * Pas assez d'historique avant la periode pour la chauffe des indicateurs d'une strategie.
+     * C'est une IllegalArgumentException (donc un HTTP 400) ; un type a part permet a la comparaison
+     * d'ajouter le nom de la strategie en cause, les autres erreurs etant communes a toutes les strategies.
+     */
+    static final class InsufficientHistoryException extends IllegalArgumentException {
+        InsufficientHistoryException(String message) {
+            super(message);
+        }
+    }
+
     private final BacktestRepository repository;
     private final StrategyService strategies;
     private final MarketDataService marketData;
@@ -137,18 +148,25 @@ public class BacktestService {
             params.add(StrategyRules.normalize(strategy.getType(), strategy.getParams()));
         }
 
-        PriceSeries series = marketData.series(req.symbol());
+        PriceSeries series = marketData.series(req.symbol());   // charge une seule fois pour toutes les strategies
         List<StrategyComparison> results = new ArrayList<>(selected.size());
         Curves referenceCurves = null;
         for (int i = 0; i < selected.size(); i++) {
             Strategy strategy = selected.get(i);
-            BacktestResult result = simulate(series, strategy.getType(), params.get(i), settings,
-                    req.from(), req.to(), req.splitDate());
+            BacktestResult result;
+            try {
+                result = simulate(series, strategy.getType(), params.get(i), settings,
+                        req.from(), req.to(), req.splitDate());
+            } catch (InsufficientHistoryException e) {
+                // seule erreur qui depend de la strategie (sa periode de chauffe) : on dit laquelle est en cause
+                throw new IllegalArgumentException("« " + strategy.getName() + " » — " + e.getMessage(), e);
+            }
             Curves curves = result.curves();
+            // meme serie et meme periode : toutes les strategies ont les memes dates et le meme buy & hold
             if (referenceCurves == null) referenceCurves = curves;
             results.add(new StrategyComparison(strategy.getId(), strategy.getName(), strategy.getType(),
                     params.get(i), result.metrics(), result.train(), result.test(),
-                    new ComparisonCurve(curves.dates(), curves.equity(), curves.drawdown())));
+                    new ComparisonCurve(curves.equity(), curves.drawdown())));
         }
 
         LocalDate[] dates = referenceCurves.dates();
@@ -209,7 +227,7 @@ public class BacktestService {
         int warmup = Signals.warmup(type, params);
         int usable = hi - Math.max(lo, warmup - 1) + 1;
         if (usable < MIN_BARS) {
-            throw new IllegalArgumentException(label + " : historique insuffisant. Cette stratégie a besoin de "
+            throw new InsufficientHistoryException(label + " : historique insuffisant. Cette stratégie a besoin de "
                     + warmup + " séances avant son premier signal ; il n'en reste que " + Math.max(usable, 0)
                     + " exploitable(s), il en faut au moins " + MIN_BARS);
         }
