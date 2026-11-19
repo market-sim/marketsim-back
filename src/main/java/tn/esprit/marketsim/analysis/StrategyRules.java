@@ -18,7 +18,8 @@ import java.util.Locale;
 public final class StrategyRules {
 
     static final int MIN_PERIOD = 2;
-    static final int MAX_PERIOD = 500;
+    /** Public : reutilise par les configurations d'indicateurs (IndicatorRules.MAX_SAVED_PERIOD). */
+    public static final int MAX_PERIOD = 500;
     static final double MAX_BAND_K = 10;
 
     private StrategyRules() {

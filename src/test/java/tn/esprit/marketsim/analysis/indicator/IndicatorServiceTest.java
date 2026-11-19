@@ -123,6 +123,23 @@ class IndicatorServiceTest {
     }
 
     @Test
+    void theMessagesComeFromTheSharedRules() {
+        // memes regles (et memes messages) que les configurations enregistrees : IndicatorRules
+        assertEquals("macd : la période rapide doit être plus courte que la période lente", assertThrows(
+                IllegalArgumentException.class, () -> compute(null, null, null, "26,12,9", null, null, null)).getMessage());
+        assertEquals("bollinger : le multiplicateur doit être entre 0 et 10", assertThrows(
+                IllegalArgumentException.class, () -> compute(null, null, null, null, "20,11", null, null)).getMessage());
+        assertEquals("sma : la période doit être un entier supérieur ou égal à 2", assertThrows(
+                IllegalArgumentException.class, () -> compute("1", null, null, null, null, null, null)).getMessage());
+    }
+
+    @Test
+    void aNaNMultiplierIsRejected() {
+        // accepte avant la regle commune (« k <= 0 || k > 10 » est faux pour NaN) : les bandes valaient alors NaN
+        assertRejected(null, null, null, null, "20,NaN");
+    }
+
+    @Test
     void errorMessagesNameTheParameter() {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> compute(null, null, "abc", null, null, null, null));

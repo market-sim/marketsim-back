@@ -109,9 +109,7 @@ public class IndicatorService {
             int fast = period("macd", v[0], size);
             int slow = period("macd", v[1], size);
             int signal = period("macd", v[2], size);
-            if (fast >= slow) {
-                throw new IllegalArgumentException("macd : la période rapide doit être plus courte que la période lente");
-            }
+            IndicatorRules.fastBeforeSlow("macd", fast, slow);
             if (slow + signal > size) {
                 throw new IllegalArgumentException("macd : historique trop court (" + size + " jours) pour ces périodes");
             }
@@ -127,10 +125,7 @@ public class IndicatorService {
                 throw new IllegalArgumentException("bollinger : période et multiplicateur attendus, ex. bollinger=20,2");
             }
             int n = period("bollinger", v[0], size);
-            double k = v[1];
-            if (k <= 0 || k > 10) {
-                throw new IllegalArgumentException("bollinger : le multiplicateur doit être entre 0 et 10");
-            }
+            double k = IndicatorRules.bandK("bollinger", v[1]);
             Indicators.Bands b = Indicators.bollinger(closes, n, k);
             bollingerOut = new BollingerSeries(n, k,
                     window(b.upper(), lo, hi), window(b.middle(), lo, hi), window(b.lower(), lo, hi));
@@ -171,11 +166,12 @@ public class IndicatorService {
         return out;
     }
 
-    /** Une periode valide est un entier entre 2 et la taille de l'historique (exclue). */
+    /**
+     * Une periode valide est un entier entre 2 et la taille de l'historique (exclue). La premiere regle est
+     * commune avec les configurations enregistrees ({@link IndicatorRules}) ; la seconde depend de l'actif.
+     */
     private static int period(String name, double value, int size) {
-        if (value != Math.rint(value) || value < 2) {
-            throw new IllegalArgumentException(name + " : la période doit être un entier supérieur ou égal à 2");
-        }
+        IndicatorRules.period(name, value);
         if (value >= size) {
             throw new IllegalArgumentException(name + " : période trop longue pour l'historique disponible ("
                     + size + " jours)");
