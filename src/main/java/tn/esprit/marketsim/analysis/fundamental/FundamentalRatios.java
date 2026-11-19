@@ -36,6 +36,9 @@ public final class FundamentalRatios {
 
     static final String PRICE_MISSING = "Cours de l'action indisponible.";
     static final String ONE_YEAR_ONLY = "Un seul exercice disponible : pas de comparaison sur un an.";
+    /** Aucun dividende dans le 10-K : on ne l'affiche pas comme 0 %, faute de preuve, mais on dit ce que cela signifie. */
+    static final String NO_DIVIDEND = "Aucun dividende par action publié dans le rapport 10-K : "
+            + "en général, la société n'en verse pas.";
 
     // ===================== Ratios =====================
 
@@ -87,10 +90,13 @@ public final class FundamentalRatios {
         return value(Ratio.PRICE_TO_BOOK, price / (equity / shares));
     }
 
-    /** Rendement du dividende = dividende par action / cours. */
+    /**
+     * Rendement du dividende = dividende par action / cours. Sans dividende publie, le ratio reste vide (jamais 0 %)
+     * avec {@link #NO_DIVIDEND} : une societe qui verse un dividende le publie dans son 10-K.
+     */
     static RatioValue dividendYield(Double dividend, Double price) {
+        if (dividend == null) return missing(Ratio.DIVIDEND_YIELD, NO_DIVIDEND);
         if (price == null) return missing(Ratio.DIVIDEND_YIELD, PRICE_MISSING);
-        if (dividend == null) return notFound(Ratio.DIVIDEND_YIELD, FundamentalItem.DIVIDEND_PER_SHARE);
         return value(Ratio.DIVIDEND_YIELD, dividend / price);
     }
 

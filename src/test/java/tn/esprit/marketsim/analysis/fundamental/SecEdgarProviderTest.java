@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -64,6 +66,66 @@ class SecEdgarProviderTest {
         provider = new SecEdgarProvider(http, CompanyFactsParserTest.JSON, UA, clock);
         when(http.get(SecEdgarProvider.TICKERS_URL, UA)).thenReturn(new Response(200, TICKERS));
         when(http.get(FACTS_URL, UA)).thenReturn(new Response(200, FACTS));
+        // aucun fichier de depot par defaut (le fichier synthetique n'a pas de nombre d'actions a la cloture)
+        when(http.get(startsWith("https://www.sec.gov/Archives/"), eq(UA))).thenReturn(new Response(404, ""));
+    }
+
+    // ===================== Plusieurs categories d'actions : instance XBRL du dernier 10-K =====================
+
+    private static final String META_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK0001326801.json";
+    private static final String META_FOLDER = "https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/";
+
+    private void metaFiles() throws Exception {
+        when(http.get(META_FACTS_URL, UA)).thenReturn(
+                new Response(200, CompanyFactsParserTest.resource("sec-companyfacts-meta-extrait.json")));
+        when(http.get(META_FOLDER + "index.json", UA)).thenReturn(
+                new Response(200, CompanyFactsParserTest.resource("sec-index-meta-extrait.json")));
+        when(http.get(META_FOLDER + "meta-20251231_htm.xml", UA)).thenReturn(
+                new Response(200, CompanyFactsParserTest.resource("sec-instance-meta-extrait.xml")));
+    }
+
+    @Test
+    void multiClassSharesAreReadInTheInstanceOfTheLatest10K() throws Exception {
+        metaFiles();
+        FundamentalsData d = provider.fetch("META", "0001326801");
+        assertEquals(2_529_555_464.0, d.years().get(0).value(FundamentalItem.SHARES_OUTSTANDING),
+                "page de garde : classes A et B additionnees");
+        assertEquals(2_561_000_000.0, d.years().get(2).value(FundamentalItem.SHARES_OUTSTANDING));
+        // liste des fichiers du depot, puis l'instance : jamais les autres fichiers XBRL (_cal, _lab...)
+        verify(http).get(META_FOLDER + "index.json", UA);
+        verify(http).get(META_FOLDER + "meta-20251231_htm.xml", UA);
+        verify(http, times(2)).get(startsWith("https://www.sec.gov/Archives/"), eq(UA));
+    }
+
+    @Test
+    void anUnreachableInstanceDoesNotBlockTheAnalysis() throws Exception {
+        metaFiles();
+        when(http.get(META_FOLDER + "meta-20251231_htm.xml", UA)).thenReturn(new Response(503, ""));
+        FundamentalsData d = provider.fetch("META", "0001326801");
+        assertEquals(200_966_000_000.0, d.years().get(0).value(FundamentalItem.REVENUE), "le reste est la");
+        assertNull(d.years().get(0).value(FundamentalItem.SHARES_OUTSTANDING), "non disponible, jamais invente");
+
+        when(http.get(META_FOLDER + "meta-20251231_htm.xml", UA)).thenReturn(new Response(200, "<html>maintenance"));
+        assertNull(provider.fetch("META", "0001326801").years().get(0).value(FundamentalItem.SHARES_OUTSTANDING),
+                "instance illisible : meme chose");
+    }
+
+    @Test
+    void aSingleClassCompanyNeedsNoExtraRequest() throws Exception {
+        when(http.get("https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json", UA)).thenReturn(
+                new Response(200, CompanyFactsParserTest.resource("sec-companyfacts-tsla-extrait.json")));
+        FundamentalsData d = provider.fetch("TSLA", "0001318605");
+        assertEquals(3_752_431_984.0, d.years().get(0).value(FundamentalItem.SHARES_OUTSTANDING));
+        verify(http, never()).get(startsWith("https://www.sec.gov/Archives/"), anyString());
+    }
+
+    @Test
+    void theInstanceIsTheExtractedXbrlFile() {
+        assertEquals("meta-20251231_htm.xml", SecEdgarProvider.instanceFileName(
+                CompanyFactsParserTest.JSON.readTree(CompanyFactsParserTest.resource("sec-index-meta-extrait.json"))));
+        assertNull(SecEdgarProvider.instanceFileName(CompanyFactsParserTest.JSON.readTree(
+                "{\"directory\": {\"item\": [{\"name\": \"aapl-20200926.xml\"}, {\"name\": \"FilingSummary.xml\"}]}}")),
+                "pas d'instance extraite (ancien depot non « inline ») : rien");
     }
 
     @Test

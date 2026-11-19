@@ -37,7 +37,8 @@ public class SecHttpClient {
         limiter.acquire();
         HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(REQUEST_TIMEOUT)
                 .header("User-Agent", userAgent)
-                .header("Accept", "application/json")
+                // JSON (companyfacts, index.json) ou XML (instance XBRL d'un depot)
+                .header("Accept", "application/json, application/xml;q=0.9, */*;q=0.8")
                 .GET().build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
         return new Response(response.statusCode(), response.body());

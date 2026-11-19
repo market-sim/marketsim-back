@@ -71,8 +71,8 @@ class FundamentalRatiosTest {
                 FundamentalItem.EPS_DILUTED, 1.5, FundamentalItem.EQUITY, 600, FundamentalItem.SHARES_OUTSTANDING, 100);
         List<RatioValue> r = FundamentalRatios.compute(latest, complete(2024, 1000, 90), 30.0);
 
-        assertNull(get(r, Ratio.DIVIDEND_YIELD).value(), "jamais 0 quand le dividende est introuvable");
-        assertTrue(get(r, Ratio.DIVIDEND_YIELD).unavailableReason().contains("Dividende par action introuvable"));
+        assertNull(get(r, Ratio.DIVIDEND_YIELD).value(), "jamais 0 % quand aucun dividende n'est publie");
+        assertEquals(FundamentalRatios.NO_DIVIDEND, get(r, Ratio.DIVIDEND_YIELD).unavailableReason());
         assertNull(get(r, Ratio.DEBT_TO_EQUITY).value());
         assertTrue(get(r, Ratio.DEBT_TO_EQUITY).unavailableReason().contains("Dette financière totale introuvable"));
         assertEquals(20, get(r, Ratio.PER).value(), EPS, "les autres ratios restent calcules");
@@ -86,6 +86,15 @@ class FundamentalRatiosTest {
             assertEquals(FundamentalRatios.PRICE_MISSING, get(r, ratio).unavailableReason());
         }
         assertEquals(0.25, get(r, Ratio.ROE).value(), EPS, "le ROE ne depend pas du cours");
+    }
+
+    @Test
+    void withoutDividendTheReasonSaysSoEvenWithoutPrice() {
+        FiscalYear latest = year(2025, FundamentalItem.REVENUE, 1200, FundamentalItem.NET_INCOME, 150);
+        // sans dividende, la question du cours ne se pose pas : la raison reste « aucun dividende »
+        assertEquals(FundamentalRatios.NO_DIVIDEND, FundamentalRatios.dividendYield(null, null).unavailableReason());
+        assertEquals(FundamentalRatios.NO_DIVIDEND,
+                get(FundamentalRatios.compute(latest, null, 30.0), Ratio.DIVIDEND_YIELD).unavailableReason());
     }
 
     @Test

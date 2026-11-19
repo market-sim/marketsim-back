@@ -14,7 +14,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import tn.esprit.marketsim.analysis.fundamental.FundamentalsData.FiscalYear;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 
 /**
  * Extraction des donnees annuelles d'un fichier « companyfacts » de la SEC.
@@ -145,8 +147,12 @@ class CompanyFactsParserTest {
 
         // les 10-Q de 2026 (9 mois : 364 357 M$) ne remplacent pas le chiffre annuel
         assertEquals(416_161_000_000.0, d.years().get(1).value(FundamentalItem.REVENUE));
-        assertEquals(15_115_823_000.0, d.years().get(2).value(FundamentalItem.SHARES_OUTSTANDING),
-                "chaque exercice prend la page de garde de son propre 10-K");
+        // exercices precedents : nombre a la cloture, republie par le 10-K le plus recent qui le donne
+        // (et non 15 115 823 000, page de garde du 10-K 2024, qui ne serait pas retraitee apres une division)
+        assertEquals(14_773_260_000.0, d.years().get(1).value(FundamentalItem.SHARES_OUTSTANDING), "au 27/09/2025");
+        assertEquals(15_116_786_000.0, d.years().get(2).value(FundamentalItem.SHARES_OUTSTANDING), "au 28/09/2024");
+        assertEquals(SecConcepts.YEAR_END_SHARES, d.years().get(2).values().get(FundamentalItem.SHARES_OUTSTANDING).concept());
+        assertFalse(CompanyFactsParser.needsInstance(d), "une seule categorie d'actions : companyfacts suffit");
     }
 
     @Test
@@ -195,7 +201,99 @@ class CompanyFactsParserTest {
         assertEquals(370.3703703704, value(t, Ratio.PER), 1e-9, "400 / 1,08");
         assertEquals(-0.0293069915, value(t, Ratio.REVENUE_GROWTH), 1e-9, "94 827 / 97 690 - 1 : ventes en baisse");
         assertEquals(-0.4649555775, value(t, Ratio.NET_INCOME_GROWTH), 1e-9, "3 794 / 7 091 - 1");
-        assertNull(value(t, Ratio.DIVIDEND_YIELD), "aucun dividende publie");
+        assertNull(value(t, Ratio.DIVIDEND_YIELD), "aucun dividende publie : jamais 0 %");
+        assertEquals(FundamentalRatios.NO_DIVIDEND,
+                t.stream().filter(x -> x.ratio() == Ratio.DIVIDEND_YIELD).findFirst().orElseThrow().unavailableReason(),
+                "le message dit qu'aucun dividende n'est publie, ce qui veut dire en general qu'il n'y en a pas");
+    }
+
+    // ===================== Divisions d'actions (extrait reel NVIDIA) =====================
+    // NVIDIA a divise ses actions par 10 en juin 2024. Faits recopies tels quels de data.sec.gov (depots depuis
+    // 2023, clotures depuis juin 2022).
+
+    @Test
+    void nvidiaPreviousYearsAreRestatedAfterItsStockSplit() {
+        FundamentalsData d = parse("sec-companyfacts-nvda-extrait.json");
+        assertEquals(List.of(2026, 2025, 2024), d.years().stream().map(FiscalYear::fiscalYear).toList());
+        FiscalYear y2026 = d.years().get(0);
+        FiscalYear y2025 = d.years().get(1);
+        FiscalYear y2024 = d.years().get(2);
+        assertEquals(LocalDate.of(2026, 1, 25), y2026.end(), "exercice clos fin janvier");
+
+        // BPA : 11,93 $ dans le 10-K 2024 (avant division), 1,19 $ retraite dans les suivants
+        assertEquals(4.90, y2026.value(FundamentalItem.EPS_DILUTED));
+        assertEquals(2.94, y2025.value(FundamentalItem.EPS_DILUTED));
+        assertEquals(1.19, y2024.value(FundamentalItem.EPS_DILUTED));
+        // dividende : 0,16 $ avant division, 0,016 $ retraite
+        assertEquals(0.016, y2024.value(FundamentalItem.DIVIDEND_PER_SHARE));
+
+        // nombre d'actions : page de garde du dernier 10-K, puis nombres a la cloture retraites
+        assertEquals(24_300_000_000.0, y2026.value(FundamentalItem.SHARES_OUTSTANDING), "page de garde au 20/02/2026");
+        assertEquals(SecConcepts.COVER_SHARES, y2026.values().get(FundamentalItem.SHARES_OUTSTANDING).concept());
+        assertEquals(24_477_000_000.0, y2025.value(FundamentalItem.SHARES_OUTSTANDING), "au 26/01/2025");
+        assertEquals(24_643_000_000.0, y2024.value(FundamentalItem.SHARES_OUTSTANDING),
+                "au 28/01/2024, retraite dans le 10-K 2025 ; pas 2 500 000 000 (page de garde de fevrier 2024)");
+        assertFalse(CompanyFactsParser.needsInstance(d));
+    }
+
+    @Test
+    void aSplitBetweenTheLastTwoReportsIsAppliedToTheOldestYear() {
+        // Situation de 2025 : le dernier 10-K (fevrier 2025) est le premier apres la division. L'exercice clos le
+        // 29/01/2023 n'a ete republie que par le 10-K 2024, avant la division : 2 466 millions.
+        FundamentalsData d = CompanyFactsParser.parse(asOf(JSON.readTree(resource("sec-companyfacts-nvda-extrait.json")),
+                LocalDate.of(2025, 12, 31)));
+        assertEquals(List.of(2025, 2024, 2023), d.years().stream().map(FiscalYear::fiscalYear).toList());
+        FiscalYear y2023 = d.years().get(2);
+        assertEquals(0.17, y2023.value(FundamentalItem.EPS_DILUTED), "BPA retraite par le 10-K 2025 (1,74 avant)");
+        // facteur constate sur le 28/01/2024 : 24 643 M (10-K 2025) / 2 464 M (10-K 2024) = 10,001 -> 10
+        assertEquals(24_660_000_000.0, y2023.value(FundamentalItem.SHARES_OUTSTANDING), 1, "2 466 M x 10");
+        assertEquals("us-gaap:CommonStockSharesOutstanding × 10 (division d'actions)",
+                y2023.values().get(FundamentalItem.SHARES_OUTSTANDING).concept());
+        assertEquals(24_643_000_000.0, d.years().get(1).value(FundamentalItem.SHARES_OUTSTANDING), "deja retraite");
+    }
+
+    /** Le fichier tel qu'il etait a une date : sans les faits deposes apres. */
+    static JsonNode asOf(JsonNode root, LocalDate date) {
+        JsonNode copy = root.deepCopy();
+        for (JsonNode taxonomy : copy.path("facts").values()) {
+            for (JsonNode concept : taxonomy.values()) {
+                for (JsonNode list : concept.path("units").values()) {
+                    ArrayNode facts = (ArrayNode) list;
+                    for (int i = facts.size() - 1; i >= 0; i--) {
+                        if (LocalDate.parse(facts.get(i).path("filed").asString()).isAfter(date)) facts.remove(i);
+                    }
+                }
+            }
+        }
+        return copy;
+    }
+
+    // ===================== Plusieurs categories d'actions (extraits reels Meta) =====================
+
+    @Test
+    void metaSharesComeFromTheInstanceNotFromTheDilutedAverage() {
+        FundamentalsData d = parse("sec-companyfacts-meta-extrait.json");
+        assertEquals(List.of(2025, 2024, 2023), d.years().stream().map(FiscalYear::fiscalYear).toList());
+        FiscalYear y2025 = d.years().get(0);
+        assertEquals(23.49, y2025.value(FundamentalItem.EPS_DILUTED), "BPA dilue trouve malgre les deux categories");
+        // companyfacts n'a que la moyenne ponderee diluee (2 574 M) : ce n'est pas un nombre d'actions, on ne la prend pas
+        assertNull(y2025.value(FundamentalItem.SHARES_OUTSTANDING));
+        assertTrue(CompanyFactsParser.needsInstance(d));
+
+        FundamentalsData completed = CompanyFactsParser.withInstance(d,
+                XbrlInstanceParser.parse(resource("sec-instance-meta-extrait.xml")));
+        FiscalYear c2025 = completed.years().get(0);
+        // page de garde du 10-K 2025 : 2 187 177 748 (classe A) + 342 377 716 (classe B)
+        assertEquals(2_529_555_464.0, c2025.value(FundamentalItem.SHARES_OUTSTANDING));
+        assertEquals("dei:EntityCommonStockSharesOutstanding (somme de 2 catégories)",
+                c2025.values().get(FundamentalItem.SHARES_OUTSTANDING).concept());
+        assertEquals(2_534_000_000.0, completed.years().get(1).value(FundamentalItem.SHARES_OUTSTANDING), "au 31/12/2024");
+        assertEquals(2_561_000_000.0, completed.years().get(2).value(FundamentalItem.SHARES_OUTSTANDING), "au 31/12/2023");
+        assertEquals("us-gaap:CommonStockSharesOutstanding (tableau des capitaux propres)",
+                completed.years().get(2).values().get(FundamentalItem.SHARES_OUTSTANDING).concept());
+        assertEquals(23.49, c2025.value(FundamentalItem.EPS_DILUTED), "les autres donnees ne changent pas");
+        assertNull(completed.years().get(2).value(FundamentalItem.DIVIDEND_PER_SHARE),
+                "Meta ne versait pas de dividende en 2023 (premier en 2024)");
     }
 
     private static Double value(List<FundamentalRatios.RatioValue> ratios, Ratio ratio) {

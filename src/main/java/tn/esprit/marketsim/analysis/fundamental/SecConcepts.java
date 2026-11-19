@@ -21,12 +21,23 @@ import java.util.Map;
  *       regle passe donc APRES celles qui utilisent les libelles sans ambiguite.</li>
  *   <li>En dernier recours, {@code LongTermDebt} seul (part courante comprise, selon la taxonomie).</li>
  * </ul>
+ *
+ * <h2>Nombre d'actions</h2>
+ * Deux libelles, choisis selon l'exercice par {@link CompanyFactsParser} : la page de garde du dernier 10-K
+ * ({@link #COVER_SHARES}) et le nombre en circulation a chaque cloture ({@link #YEAR_END_SHARES}). La moyenne
+ * ponderee diluee de l'annee n'est plus utilisee : c'est une autre mesure (celle du BPA), pas un nombre d'actions.
  */
 public final class SecConcepts {
 
     private SecConcepts() {
     }
 
+    /** Nombre d'actions de la page de garde, a une date proche du depot. Jamais retraite ensuite. */
+    public static final String COVER_SHARES = "dei:EntityCommonStockSharesOutstanding";
+    /** Nombre d'actions en circulation a une date de bilan. Republie (et retraite) dans les 10-K suivants. */
+    public static final String YEAR_END_SHARES = "us-gaap:CommonStockSharesOutstanding";
+
+    /** Regles des donnees lues de la meme facon pour chaque exercice (toutes sauf le nombre d'actions). */
     public static final Map<FundamentalItem, List<XbrlRule>> RULES = new EnumMap<>(FundamentalItem.class);
 
     static {
@@ -56,11 +67,7 @@ public final class SecConcepts {
                 XbrlRule.sum("us-gaap:DebtCurrent", "us-gaap:LongTermDebt"),
                 XbrlRule.of("us-gaap:LongTermDebt")
                         .plusIfPresent("us-gaap:CommercialPaper", "us-gaap:ShortTermBorrowings")));
-        RULES.put(FundamentalItem.SHARES_OUTSTANDING, List.of(
-                // page de garde du 10-K : nombre d'actions a une date proche du depot (le plus recent)
-                XbrlRule.of("dei:EntityCommonStockSharesOutstanding"),
-                XbrlRule.of("us-gaap:CommonStockSharesOutstanding"),
-                XbrlRule.of("us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding")));
+        // le nombre d'actions n'est pas dans RULES : sa regle depend de l'exercice (voir CompanyFactsParser.shares)
         RULES.put(FundamentalItem.DIVIDEND_PER_SHARE, List.of(
                 XbrlRule.of("us-gaap:CommonStockDividendsPerShareDeclared"),
                 XbrlRule.of("us-gaap:CommonStockDividendsPerShareCashPaid")));

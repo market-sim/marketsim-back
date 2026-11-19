@@ -288,7 +288,7 @@ class FundamentalsServiceTest {
         assertNotNull(debt.concept());
         RatioView yield = ratio(d.ratios(), Ratio.DIVIDEND_YIELD);
         assertNull(yield.value());
-        assertTrue(yield.unavailableReason().contains("introuvable"));
+        assertEquals(FundamentalRatios.NO_DIVIDEND, yield.unavailableReason());
         assertNotNull(yield.explanation(), "chaque ratio a son explication");
     }
 }

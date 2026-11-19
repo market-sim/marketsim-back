@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import lombok.extern.slf4j.Slf4j;
+import tn.esprit.marketsim.analysis.fundamental.XbrlInstanceParser.InstanceShares;
 import tn.esprit.marketsim.common.NotFoundException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -25,18 +27,25 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>Symbole -> CIK (identifiant SEC de la societe) grace a {@value #TICKERS_URL}. Ce fichier (environ 1 Mo)
  *       est garde en memoire {@link #TICKERS_FRESH_FOR} ; le CIK est en plus garde avec les donnees en base.</li>
  *   <li>Faits XBRL de la societe : {@value #FACTS_URL}, lus par {@link CompanyFactsParser}.</li>
+ *   <li>Seulement pour une societe a plusieurs categories d'actions (Alphabet, Meta...) : liste des fichiers du
+ *       dernier 10-K ({@code index.json}), puis son instance XBRL ({@code *_htm.xml}, 2 a 3 Mo), lue par
+ *       {@link XbrlInstanceParser} pour additionner les categories. Si elle est illisible ou injoignable, l'analyse
+ *       continue sans elle (nombre d'actions a la cloture, ou « non disponible »).</li>
  * </ol>
  *
  * <p>La SEC exige dans chaque requete un User-Agent avec un nom et une adresse de contact. Il est lu dans
  * {@code app.analysis.sec.user-agent}, alimentee par la variable d'environnement {@code SEC_USER_AGENT} : aucune
  * adresse n'est ecrite dans le code ni dans Git.
  */
+@Slf4j
 @Component
 public class SecEdgarProvider implements FundamentalsProvider {
 
     public static final String SOURCE = "SEC_EDGAR";
     static final String TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
     static final String FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK%s.json";
+    /** Dossier d'un depot : CIK sans les zeros de tete, numero de depot sans tirets. */
+    static final String FILING_FOLDER = "https://www.sec.gov/Archives/edgar/data/%d/%s/";
     static final Duration TICKERS_FRESH_FOR = Duration.ofHours(24);
 
     static final String MISSING_USER_AGENT = "La source SEC EDGAR n'est pas configurée sur le serveur. La SEC exige "
@@ -91,7 +100,44 @@ public class SecEdgarProvider implements FundamentalsProvider {
             throw new NotFoundException("Aucun rapport annuel 10-K exploitable à la SEC pour " + symbol
                     + " (une société étrangère publie un 20-F, non pris en charge)");
         }
+        if (CompanyFactsParser.needsInstance(data)) {
+            String accession = data.years().get(0).accession();
+            try {
+                data = CompanyFactsParser.withInstance(data, instanceShares(cik, accession));
+            } catch (SourceUnavailableException | IllegalArgumentException e) {
+                // le reste de l'analyse est valable : on ne la refuse pas pour le seul nombre d'actions
+                log.warn("Fondamentaux {} : instance XBRL du depot {} non lue ({})", symbol, accession, e.getMessage());
+            }
+        }
         return data;
+    }
+
+    // ===================== Instance XBRL du dernier 10-K =====================
+
+    /** Nombres d'actions lus dans l'instance XBRL d'un depot (2 requetes : liste des fichiers, puis l'instance). */
+    InstanceShares instanceShares(String cik, String accession) {
+        String folder = String.format(FILING_FOLDER, Long.parseLong(cik), accession.replace("-", ""));
+        SecHttpClient.Response index = get(folder + "index.json");
+        checkStatus(index);
+        String name = instanceFileName(read(index.body()));
+        if (name == null) {
+            throw new SourceUnavailableException("Aucune instance XBRL dans le dépôt " + accession + ".");
+        }
+        SecHttpClient.Response instance = get(folder + name);
+        checkStatus(instance);
+        return XbrlInstanceParser.parse(instance.body());
+    }
+
+    /**
+     * Nom de l'instance XBRL dans la liste des fichiers d'un depot. Un 10-K « inline XBRL » (la regle depuis 2019 a
+     * 2021) en contient une, extraite par la SEC, nommee {@code <prefixe>_htm.xml} ; null s'il n'y en a pas.
+     */
+    static String instanceFileName(JsonNode index) {
+        for (JsonNode item : index.path("directory").path("item").values()) {
+            String name = item.path("name").asString("");
+            if (name.endsWith("_htm.xml")) return name;
+        }
+        return null;
     }
 
     /** Page du depot 10-K sur EDGAR, ex. .../data/320193/000032019326000026/0000320193-26-000026-index.htm */
