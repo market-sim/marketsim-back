@@ -15,7 +15,10 @@ import tn.esprit.marketsim.analysis.Strategy;
 import tn.esprit.marketsim.analysis.StrategyParams;
 import tn.esprit.marketsim.analysis.StrategyRules;
 import tn.esprit.marketsim.analysis.StrategyService;
+import tn.esprit.marketsim.agent.realdata.PriceSeries;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.DataCheckResult;
+import tn.esprit.marketsim.analysis.backtest.DataCheck;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StrategyComparison;
 import tn.esprit.marketsim.analysis.backtest.BacktestService;
 import tn.esprit.marketsim.analysis.backtest.PerformanceMetrics.Metrics;
@@ -74,6 +77,7 @@ public class SavedComparisonService {
         c.setBuyHoldReturn(result.strategies().get(0).metrics().buyHoldReturn());
         c.setDataSource(result.dataSource());
         c.setDataHash(result.dataHash());
+        c.setPeriodHash(result.periodHash());
         c.setStrategiesJson(json.writeValueAsString(snapshots));
         c.setResultJson(json.writeValueAsString(result));
         repository.save(c);
@@ -105,6 +109,17 @@ public class SavedComparisonService {
                 statuses(readSnapshots(c.getStrategiesJson()), user), result);
     }
 
+    /**
+     * Les cours de la periode comparee sont-ils encore les memes ? (voir {@link DataCheck}). Une ancienne
+     * comparaison, enregistree sans empreinte de periode, est « non verifiable ».
+     */
+    @Transactional(readOnly = true)
+    public DataCheckResult dataCheck(Long id, User user) {
+        SavedComparison c = mine(id, user);
+        PriceSeries current = backtests.currentPrices(c.getSymbol(), c.getPeriodHash());
+        return DataCheck.check(c.getPeriodHash(), c.getFromDate(), c.getToDate(), current);
+    }
+
     // ===================== Modifier / supprimer =====================
 
     /** Renomme une comparaison ; renvoie son resume a jour. */
@@ -123,6 +138,34 @@ public class SavedComparisonService {
     @Transactional
     public void delete(Long id, User user) {
         repository.delete(mine(id, user));
+    }
+
+    // ===================== Administration (routes reservees a l'ADMIN) =====================
+
+    /**
+     * Une comparaison de n'importe quel utilisateur, en lecture seule. L'etat des strategies est calcule par
+     * rapport aux strategies de son proprietaire.
+     */
+    @Transactional(readOnly = true)
+    public ComparisonDetail findAny(Long id) {
+        SavedComparison c = any(id);
+        ComparisonResult result = json.readValue(c.getResultJson(), ComparisonResult.class);
+        return new ComparisonDetail(c.getId(), c.getName(), c.getRankBy(), c.getCreatedAt(),
+                statuses(readSnapshots(c.getStrategiesJson()), c.getOwner()), result);
+    }
+
+    @Transactional
+    public void deleteAny(Long id) {
+        repository.delete(any(id));
+    }
+
+    private SavedComparison any(Long id) {
+        return repository.findById(id).orElseThrow(() -> new NotFoundException("Comparaison introuvable"));
+    }
+
+    /** Instantane des strategies d'une ligne (pour les listes de l'administration). */
+    public List<StrategySnapshot> snapshots(String strategiesJson) {
+        return readSnapshots(strategiesJson);
     }
 
     // ===================== Outils =====================

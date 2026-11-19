@@ -17,6 +17,7 @@ import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestDetail;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.BacktestRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.DataCheckResult;
 import tn.esprit.marketsim.user.User;
 
 /**
@@ -26,6 +27,7 @@ import tn.esprit.marketsim.user.User;
  *   POST   /api/analysis/backtests            lance un backtest et l'enregistre
  *   GET    /api/analysis/backtests            mes backtests (resumes), ?strategyId= pour filtrer
  *   GET    /api/analysis/backtests/{id}       un backtest complet (metriques, courbes, trades)
+ *   GET    /api/analysis/backtests/{id}/data-check   les cours de sa periode ont-ils change depuis ?
  *   DELETE /api/analysis/backtests/{id}       supprime un backtest
  * </pre>
  */
@@ -55,6 +57,12 @@ public class BacktestController {
     @GetMapping("/{id}")
     public BacktestDetail get(@PathVariable Long id, @AuthenticationPrincipal User user) {
         return service.findOne(id, user);
+    }
+
+    /** Les cours de la periode testee sont-ils encore les memes ? (SAME, CHANGED, NOT_COVERED, UNVERIFIABLE...) */
+    @GetMapping("/{id}/data-check")
+    public DataCheckResult dataCheck(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return service.dataCheck(id, user);
     }
 
     @DeleteMapping("/{id}")

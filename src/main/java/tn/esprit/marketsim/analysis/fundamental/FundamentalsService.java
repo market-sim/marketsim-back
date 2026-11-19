@@ -169,6 +169,40 @@ public class FundamentalsService {
         return !row.getDownloadedAt().isAfter(LocalDateTime.now(clock).minus(REFRESH_AFTER));
     }
 
+    // ===================== Administration du cache (routes reservees a l'ADMIN) =====================
+
+    /**
+     * Une societe en cache : identite SEC, date de telechargement, anciennete en jours, et si elle sera
+     * retelechargee a la prochaine lecture (plus de {@value #REFRESH_AFTER_DAYS} jours).
+     */
+    public record CacheEntry(String symbol, String cik, String companyName, String source, LocalDateTime downloadedAt,
+                             long ageDays, boolean stale, int sizeKb) {
+    }
+
+    /** Toutes les societes en cache, par symbole. N'appelle jamais la source. */
+    public List<CacheEntry> cacheEntries() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return repository.findAll().stream()
+                .sorted(java.util.Comparator.comparing(CompanyFundamentals::getSymbol))
+                .map(r -> new CacheEntry(r.getSymbol(), r.getCik(), r.getCompanyName(), r.getSource(),
+                        r.getDownloadedAt(), Duration.between(r.getDownloadedAt(), now).toDays(), isOld(r),
+                        (int) Math.ceil(r.getDataJson().length() / 1024.0)))
+                .toList();
+    }
+
+    /**
+     * Supprime l'entree d'une societe : le prochain utilisateur qui ouvre l'action la retelecharge.
+     * 404 si elle n'est pas en cache.
+     */
+    public void deleteCache(String symbol) {
+        String s = symbol == null ? "" : symbol.strip().toUpperCase(java.util.Locale.ROOT);
+        synchronized (lock(s)) {
+            CompanyFundamentals row = repository.findBySymbol(s)
+                    .orElseThrow(() -> new NotFoundException("Aucune donnée fondamentale en cache pour " + s));
+            repository.delete(row);
+        }
+    }
+
     private String staleWarning(CompanyFundamentals row, String reason) {
         long days = Duration.between(row.getDownloadedAt(), LocalDateTime.now(clock)).toDays();
         return "Données en cache téléchargées le " + row.getDownloadedAt().format(FR_DATE) + " (il y a " + days

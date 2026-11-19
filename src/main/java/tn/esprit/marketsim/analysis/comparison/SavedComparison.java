@@ -72,6 +72,13 @@ public class SavedComparison {
     @Column(length = 64)
     private String dataHash;
 
+    /**
+     * Empreinte des seances de la periode comparee seulement (Prices.periodHash), pour verifier plus tard que les
+     * cours n'ont pas ete ajustes. Absente (null) des comparaisons enregistrees avant le 2026-11-19.
+     */
+    @Column(length = 64)
+    private String periodHash;
+
     /** JSON : instantane des strategies comparees et de leurs metriques principales (ComparisonDtos.StrategySnapshot). */
     @Column(columnDefinition = "TEXT", nullable = false)
     private String strategiesJson;

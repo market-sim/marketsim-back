@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import lombok.RequiredArgsConstructor;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.DataCheckResult;
 import tn.esprit.marketsim.analysis.comparison.ComparisonDtos.ComparisonDetail;
 import tn.esprit.marketsim.analysis.comparison.ComparisonDtos.ComparisonSummary;
 import tn.esprit.marketsim.analysis.comparison.ComparisonDtos.RenameRequest;
@@ -27,6 +28,7 @@ import tn.esprit.marketsim.user.User;
  *   POST   /api/analysis/comparisons          relance la comparaison demandee et l'enregistre
  *   GET    /api/analysis/comparisons          mes comparaisons (resumes, sans les courbes)
  *   GET    /api/analysis/comparisons/{id}     une comparaison complete
+ *   GET    /api/analysis/comparisons/{id}/data-check   les cours de sa periode ont-ils change depuis ?
  *   PATCH  /api/analysis/comparisons/{id}     renomme : { "name": "..." }
  *   DELETE /api/analysis/comparisons/{id}     supprime
  * </pre>
@@ -51,6 +53,12 @@ public class SavedComparisonController {
     @GetMapping("/{id}")
     public ComparisonDetail get(@PathVariable Long id, @AuthenticationPrincipal User user) {
         return service.findOne(id, user);
+    }
+
+    /** Les cours de la periode comparee sont-ils encore les memes ? (SAME, CHANGED, NOT_COVERED, UNVERIFIABLE...) */
+    @GetMapping("/{id}/data-check")
+    public DataCheckResult dataCheck(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return service.dataCheck(id, user);
     }
 
     @PatchMapping("/{id}")

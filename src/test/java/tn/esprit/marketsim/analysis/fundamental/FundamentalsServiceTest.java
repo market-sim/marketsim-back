@@ -291,4 +291,32 @@ class FundamentalsServiceTest {
         assertEquals(FundamentalRatios.NO_DIVIDEND, yield.unavailableReason());
         assertNotNull(yield.explanation(), "chaque ratio a son explication");
     }
+
+    // ===================== Administration du cache =====================
+
+    @Test
+    void theCacheListShowsAgeAndStalenessWithoutCallingTheSource() {
+        cached("TSLA", 45);
+        cached("AAPL", 3);
+
+        List<FundamentalsService.CacheEntry> entries = service.cacheEntries();
+
+        assertEquals(List.of("AAPL", "TSLA"), entries.stream().map(FundamentalsService.CacheEntry::symbol).toList());
+        assertEquals(3, entries.get(0).ageDays());
+        assertEquals(false, entries.get(0).stale());
+        assertEquals(45, entries.get(1).ageDays());
+        assertEquals(true, entries.get(1).stale(), "plus de 30 jours : sera retelecharge");
+        assertEquals(DATA.cik(), entries.get(0).cik());
+        assertTrue(entries.get(0).sizeKb() > 0);
+        verify(provider, never()).fetch(anyString(), any());
+    }
+
+    @Test
+    void deletingACacheEntryRemovesIt() {
+        CompanyFundamentals row = cached("AAPL", 3);
+        service.deleteCache(" aapl ");
+        verify(repository).delete(row);
+        when(repository.findBySymbol("MSFT")).thenReturn(Optional.empty());
+        assertThrows(NotFoundException.class, () -> service.deleteCache("MSFT"));
+    }
 }

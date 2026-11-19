@@ -80,6 +80,13 @@ public class Backtest {
     @Column(length = 64)
     private String dataHash;
 
+    /**
+     * Empreinte SHA-256 des seances de la periode testee seulement (Prices.periodHash) : sert a verifier plus tard
+     * que les cours n'ont pas ete ajustes. Absente (null) des backtests enregistres avant le 2026-11-19.
+     */
+    @Column(length = 64)
+    private String periodHash;
+
     /** JSON : parametres de la strategie et reglages du backtest (BacktestDtos.StoredSettings). */
     @Column(columnDefinition = "TEXT")
     private String settingsJson;

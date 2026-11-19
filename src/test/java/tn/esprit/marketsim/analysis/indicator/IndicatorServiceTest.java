@@ -1,5 +1,6 @@
 package tn.esprit.marketsim.analysis.indicator;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -13,6 +14,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import tn.esprit.marketsim.agent.realdata.MarketDataService;
 import tn.esprit.marketsim.agent.realdata.PriceSeries;
 import tn.esprit.marketsim.analysis.indicator.IndicatorDtos.IndicatorResponse;
 
@@ -120,6 +122,32 @@ class IndicatorServiceTest {
         assertRejected(null, null, null, "26,12,9", null);    // rapide >= lente
         assertRejected(null, null, null, null, "20");         // il manque k
         assertRejected(null, null, null, null, "20,0");       // k nul
+    }
+
+    @Test
+    void unroundedAndRoundedClosesGiveTheSameIndicators() {
+        // juste apres un telechargement, le module 6 renvoie des clotures non arrondies ; ensuite, celles du cache
+        List<LocalDate> dates = new ArrayList<>();
+        List<Double> prices = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            dates.add(START.plusDays(i));
+            prices.add(100 + i * 0.123456789 + 5 * Math.sin(i / 4.0));
+        }
+        PriceSeries raw = PriceSeries.of("TEST", "YAHOO", dates, prices);
+        PriceSeries cached = PriceSeries.decode("TEST", "YAHOO", raw.encode());
+        MarketDataService marketData = org.mockito.Mockito.mock(MarketDataService.class);
+        IndicatorService service = new IndicatorService(marketData);
+
+        org.mockito.Mockito.when(marketData.series("TEST")).thenReturn(raw);
+        IndicatorResponse fromDownload = service.indicators("TEST", "5,20", "9", "14", "12,26,9", "20,2", null, null);
+        org.mockito.Mockito.when(marketData.series("TEST")).thenReturn(cached);
+        IndicatorResponse fromCache = service.indicators("TEST", "5,20", "9", "14", "12,26,9", "20,2", null, null);
+
+        assertArrayEquals(fromCache.sma().get(5), fromDownload.sma().get(5));
+        assertArrayEquals(fromCache.ema().get(9), fromDownload.ema().get(9));
+        assertArrayEquals(fromCache.rsi().values(), fromDownload.rsi().values());
+        assertArrayEquals(fromCache.macd().histogram(), fromDownload.macd().histogram());
+        assertArrayEquals(fromCache.bollinger().upper(), fromDownload.bollinger().upper());
     }
 
     @Test

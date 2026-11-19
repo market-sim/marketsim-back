@@ -3,6 +3,7 @@ package tn.esprit.marketsim.analysis.comparison;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,7 +29,9 @@ import org.junit.jupiter.api.Test;
 
 import tn.esprit.marketsim.agent.realdata.MarketDataService;
 import tn.esprit.marketsim.agent.realdata.PriceSeries;
+import tn.esprit.marketsim.analysis.Prices;
 import tn.esprit.marketsim.analysis.Strategy;
+import tn.esprit.marketsim.analysis.backtest.DataCheck;
 import tn.esprit.marketsim.analysis.StrategyParams;
 import tn.esprit.marketsim.analysis.StrategyService;
 import tn.esprit.marketsim.analysis.StrategyType;
@@ -36,6 +39,8 @@ import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StrategyComparison;
 import tn.esprit.marketsim.analysis.backtest.BacktestRepository;
+import tn.esprit.marketsim.analysis.backtest.BacktestSettings;
+import tn.esprit.marketsim.analysis.backtest.SimulationDefaultsService;
 import tn.esprit.marketsim.analysis.backtest.BacktestService;
 import tn.esprit.marketsim.analysis.comparison.ComparisonDtos.ComparisonDetail;
 import tn.esprit.marketsim.analysis.comparison.ComparisonDtos.ComparisonSummary;
@@ -79,7 +84,9 @@ class SavedComparisonServiceTest {
         repository = mock(SavedComparisonRepository.class);
         strategies = mock(StrategyService.class);
         marketData = mock(MarketDataService.class);
-        backtests = new BacktestService(mock(BacktestRepository.class), strategies, marketData, json);
+        SimulationDefaultsService defaults = mock(SimulationDefaultsService.class);
+        when(defaults.current()).thenReturn(BacktestSettings.BUILT_IN);
+        backtests = new BacktestService(mock(BacktestRepository.class), strategies, marketData, json, defaults);
         service = new SavedComparisonService(repository, backtests, strategies, json);
         alice = user(7L);
         bob = user(8L);
@@ -313,6 +320,57 @@ class SavedComparisonServiceTest {
         assertEquals(List.of(StrategyStatus.MODIFIED, StrategyStatus.MODIFIED), service.findOne(id, alice).strategyStatus());
         assertEquals("RSI standard", service.findOne(id, alice).result().strategies().get(1).strategyName(),
                 "le nom affiche reste celui de l'instantane");
+    }
+
+    // ===================== Verification des cours =====================
+
+    @Test
+    void aSavedComparisonStoresThePeriodHashAndCanBeChecked() {
+        Long id = service.save(save("Test", null, request(5L, 6L)), alice).id();
+        SavedComparison stored = savedDb.get(id);
+        assertEquals(Prices.periodHash(Prices.normalized(prices), stored.getFromDate(), stored.getToDate()),
+                stored.getPeriodHash());
+
+        assertEquals(DataCheck.Status.SAME, service.dataCheck(id, alice).status());
+        // cours ajustes depuis (dividende) : toutes les clotures baissent de 1 %
+        PriceSeries adjusted = PriceSeries.of("TEST", "TEST", List.of(prices.dates()),
+                java.util.Arrays.stream(prices.closes()).map(c -> c * 0.99).boxed().toList());
+        when(marketData.series("TEST")).thenReturn(adjusted);
+        assertEquals(DataCheck.Status.CHANGED, service.dataCheck(id, alice).status());
+        assertThrows(NotFoundException.class, () -> service.dataCheck(id, bob));
+    }
+
+    @Test
+    void aComparisonSavedBeforeTheseSettingsIsStillRead() {
+        // meme reglage que le JsonMapper de Spring : un champ primitif absent est une erreur
+        JsonMapper strict = JsonMapper.builder().enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES).build();
+        SavedComparisonService strictService = new SavedComparisonService(repository, backtests, strategies, strict);
+        Long id = service.save(save("Ancienne", null, request(5L, 6L)), alice).id();
+        SavedComparison stored = savedDb.get(id);
+
+        // JSON tel qu'enregistre avant le 2026-11-19 : sans taux sans risque, seances par an ni empreinte de periode
+        tools.jackson.databind.node.ObjectNode result = (tools.jackson.databind.node.ObjectNode) strict.readTree(stored.getResultJson());
+        ((tools.jackson.databind.node.ObjectNode) result.get("settings")).remove("riskFreeRate");
+        result.remove("periodsPerYear");
+        result.remove("periodHash");
+        stored.setResultJson(result.toString());
+        stored.setPeriodHash(null);
+
+        ComparisonDetail detail = strictService.findOne(id, alice);
+
+        assertEquals(0, detail.result().settings().riskFreeRate(), 0.0);
+        assertNull(detail.result().periodsPerYear());
+        assertNull(detail.result().periodHash());
+        assertEquals(2, detail.result().strategies().size());
+        assertEquals(DataCheck.Status.UNVERIFIABLE, strictService.dataCheck(id, alice).status());
+    }
+
+    @Test
+    void anOldComparisonIsUnverifiable() {
+        Long id = service.save(save("Test", null, request(5L, 6L)), alice).id();
+        savedDb.get(id).setPeriodHash(null);       // enregistree avant l'empreinte de periode
+        assertEquals(DataCheck.Status.UNVERIFIABLE, service.dataCheck(id, alice).status());
+        verify(marketData, times(1)).series("TEST");   // seulement pour l'enregistrement, pas pour la verification
     }
 
     // ===================== Outils =====================

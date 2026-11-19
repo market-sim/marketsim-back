@@ -26,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 
 import tn.esprit.marketsim.agent.realdata.MarketDataService;
 import tn.esprit.marketsim.agent.realdata.PriceSeries;
+import tn.esprit.marketsim.analysis.Prices;
 import tn.esprit.marketsim.analysis.Strategy;
 import tn.esprit.marketsim.analysis.StrategyParams;
 import tn.esprit.marketsim.analysis.StrategyRules;
@@ -53,6 +54,7 @@ class BacktestServiceTest {
     private BacktestRepository repository;
     private StrategyService strategies;
     private MarketDataService marketData;
+    private SimulationDefaultsService defaults;
     private BacktestService service;
     private User user;
 
@@ -61,7 +63,9 @@ class BacktestServiceTest {
         repository = mock(BacktestRepository.class);
         strategies = mock(StrategyService.class);
         marketData = mock(MarketDataService.class);
-        service = new BacktestService(repository, strategies, marketData, JsonMapper.builder().build());
+        defaults = mock(SimulationDefaultsService.class);
+        when(defaults.current()).thenReturn(BacktestSettings.BUILT_IN);     // parametres par defaut d'origine
+        service = new BacktestService(repository, strategies, marketData, JsonMapper.builder().build(), defaults);
         user = new User();
         user.setId(7L);
     }
@@ -143,7 +147,9 @@ class BacktestServiceTest {
                 .startsWith("feeRate"), "0.1 voudrait dire 10 % : erreur d'unite probable");
         assertTrue(messageOf(() -> BacktestService.settings(request(null, null, 0.5, null, null, null)))
                 .startsWith("slippage"));
-        assertTrue(messageOf(() -> BacktestService.settings(request(null, null, null, 0.0, null, null)))
+        // 0 veut dire « aucun stop-loss » (pour desactiver un stop-loss des parametres par defaut) ; negatif : refuse
+        assertNull(BacktestService.settings(request(null, null, null, 0.0, null, null)).stopLoss());
+        assertTrue(messageOf(() -> BacktestService.settings(request(null, null, null, -0.05, null, null)))
                 .startsWith("stopLoss"));
         assertTrue(messageOf(() -> BacktestService.settings(request(null, null, null, 5.0, null, null)))
                 .startsWith("stopLoss"), "5 voudrait dire 500 % : il faut 0.05");
@@ -270,11 +276,13 @@ class BacktestServiceTest {
         assertEquals(rsi.getId(), result.strategies().get(1).strategyId());
 
         // chaque strategie donne exactement le resultat d'un backtest seul avec les memes reglages :
-        // la comparaison reutilise le moteur, elle ne refait aucun calcul de son cote
+        // la comparaison reutilise le moteur, elle ne refait aucun calcul de son cote. Comme un backtest seul,
+        // elle travaille sur les clotures arrondies a 6 decimales (Prices.normalized).
         BacktestSettings settings = new BacktestSettings(5000, 0.002, 0.001, 0.05, 0.10, 0.8);
-        BacktestResult smaAlone = BacktestService.simulate(prices, StrategyType.SMA_CROSS, smaCross(5, 20), settings,
+        PriceSeries normalized = Prices.normalized(prices);
+        BacktestResult smaAlone = BacktestService.simulate(normalized, StrategyType.SMA_CROSS, smaCross(5, 20), settings,
                 null, null, split);
-        BacktestResult rsiAlone = BacktestService.simulate(prices, StrategyType.RSI, params(StrategyType.RSI), settings,
+        BacktestResult rsiAlone = BacktestService.simulate(normalized, StrategyType.RSI, params(StrategyType.RSI), settings,
                 null, null, split);
         assertTrue(smaAlone.metrics().tradeCount() > 0, "le jeu de donnees doit produire des trades");
         List<BacktestResult> alone = List.of(smaAlone, rsiAlone);
@@ -620,6 +628,195 @@ class BacktestServiceTest {
 
         verify(repository).delete(deleted);
         verify(strategies).recordBacktest(strategy, null, null, null, null);
+    }
+
+    // ===================== Fiabilite : prix normalises, annualisation, taux sans risque =====================
+
+    @Test
+    void unroundedAndRoundedClosesGiveTheSameResult() {
+        // juste apres un telechargement, le module 6 renvoie des clotures non arrondies ; ensuite, celles du cache
+        PriceSeries raw = wavy(300);
+        PriceSeries cached = PriceSeries.decode(raw.symbol(), raw.source(), raw.encode());
+        Strategy sma = strategy(5L, "SMA", StrategyType.SMA_CROSS);
+        sma.setParams(smaCross(5, 20));
+        strategy(6L, "RSI", StrategyType.RSI);
+        CompareRequest req = compareRequest(List.of(5L, 6L), START.plusDays(150));
+
+        when(marketData.series("TEST")).thenReturn(raw);
+        ComparisonResult fromDownload = service.compare(req, user);
+        BacktestDetail backtestFromDownload = service.run(new BacktestRequest(5L, "TEST", null, null, null, null, null,
+                null, null, null, null), user);
+        when(marketData.series("TEST")).thenReturn(cached);
+        ComparisonResult fromCache = service.compare(req, user);
+        BacktestDetail backtestFromCache = service.run(new BacktestRequest(5L, "TEST", null, null, null, null, null,
+                null, null, null, null), user);
+
+        for (int i = 0; i < 2; i++) {
+            assertEquals(fromCache.strategies().get(i).metrics(), fromDownload.strategies().get(i).metrics());
+            assertEquals(fromCache.strategies().get(i).test(), fromDownload.strategies().get(i).test());
+            assertArrayEquals(fromCache.strategies().get(i).curves().equity(), fromDownload.strategies().get(i).curves().equity());
+        }
+        assertEquals(fromCache.periodHash(), fromDownload.periodHash());
+        assertEquals(backtestFromCache.metrics(), backtestFromDownload.metrics());
+        assertEquals(backtestFromCache.trades(), backtestFromDownload.trades());
+    }
+
+    @Test
+    void theRiskFreeRateIsAnOptionalSetting() {
+        assertEquals(0, BacktestService.settings(request(null, null, null, null, null, null)).riskFreeRate(), 0.0);
+        BacktestRequest withRate = new BacktestRequest(5L, "TEST", null, null, null, null, null, null, null, null, null, 0.03);
+        assertEquals(0.03, BacktestService.settings(withRate).riskFreeRate(), 0.0);
+        assertEquals(0.20, BacktestService.settings(new BacktestRequest(5L, "TEST", null, null, null, null, null, null,
+                null, null, null, 0.20)).riskFreeRate(), 0.0, "20 % accepte");
+        for (double bad : new double[] {-0.01, 0.21, Double.NaN}) {
+            String message = messageOf(() -> BacktestService.settings(new BacktestRequest(5L, "TEST", null, null, null,
+                    null, null, null, null, null, null, bad)));
+            assertTrue(message.startsWith("riskFreeRate"), message);
+        }
+    }
+
+    @Test
+    void theAnnualisationFollowsTheAssetCalendarAndTheRiskFreeRateLowersTheSharpe() {
+        PriceSeries daily = wavy(800);       // cote tous les jours, comme une cryptomonnaie
+        BacktestResult noRate = BacktestService.simulate(daily, StrategyType.BUY_AND_HOLD, params(StrategyType.BUY_AND_HOLD),
+                DEFAULTS, null, null, null);
+        BacktestSettings withRate = new BacktestSettings(10_000, 0.001, 0, null, null, 1, 0.04);
+        BacktestResult rate = BacktestService.simulate(daily, StrategyType.BUY_AND_HOLD, params(StrategyType.BUY_AND_HOLD),
+                withRate, null, null, null);
+
+        assertEquals(365, noRate.periodsPerYear());
+        // recalculee sur la courbe de capital (arrondie au centime) : racine(365), pas racine(252), soit 20 % d'ecart
+        double[] equity = noRate.curves().equity();
+        assertEquals(PerformanceMetrics.volatility(equity, 365), noRate.metrics().volatility(), 1e-4);
+        assertTrue(Math.abs(PerformanceMetrics.volatility(equity, 252) - noRate.metrics().volatility()) > 0.01);
+        assertTrue(rate.metrics().sharpe() < noRate.metrics().sharpe());
+        assertEquals(noRate.metrics().totalReturn(), rate.metrics().totalReturn(), "seuls Sharpe et Sortino changent");
+    }
+
+    @Test
+    void comparisonCarriesTheRiskFreeRateAndThePeriodsPerYear() {
+        Strategy sma = strategy(5L, "SMA", StrategyType.SMA_CROSS);
+        sma.setParams(smaCross(5, 20));
+        strategy(6L, "RSI", StrategyType.RSI);
+        when(marketData.series("TEST")).thenReturn(wavy(300));
+        CompareRequest req = new CompareRequest(List.of(5L, 6L), "TEST", null, null, null, null, null, null, null, null,
+                null, 0.02);
+
+        ComparisonResult r = service.compare(req, user);
+
+        assertEquals(0.02, r.settings().riskFreeRate(), 0.0);
+        assertEquals(365, r.periodsPerYear());
+        assertEquals(Prices.periodHash(Prices.normalized(wavy(300)), r.from(), r.to()), r.periodHash());
+    }
+
+    @Test
+    void aBacktestSavedBeforeTheseSettingsIsStillRead() {
+        // meme reglage que le JsonMapper de Spring : un champ primitif absent est une erreur
+        JsonMapper strict = JsonMapper.builder().enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES).build();
+        BacktestService strictService = new BacktestService(repository, strategies, marketData, strict, defaults);
+        Strategy strategy = strategy(StrategyType.BUY_AND_HOLD);
+        BacktestResult result = BacktestService.simulate(wavy(200), StrategyType.BUY_AND_HOLD,
+                params(StrategyType.BUY_AND_HOLD), DEFAULTS, null, null, null);
+
+        // JSON tel qu'enregistre avant le 2026-11-19 : sans taux sans risque ni seances par an
+        tools.jackson.databind.node.ObjectNode settings = strict.valueToTree(
+                new BacktestDtos.StoredSettings(params(StrategyType.BUY_AND_HOLD), DEFAULTS));
+        ((tools.jackson.databind.node.ObjectNode) settings.get("settings")).remove("riskFreeRate");
+        tools.jackson.databind.node.ObjectNode stored = strict.valueToTree(result);
+        stored.remove("periodsPerYear");
+        Backtest old = backtest(42L, strategy, null, null, null, 0);
+        old.setStrategyName("Ancien");
+        old.setStrategyType(StrategyType.BUY_AND_HOLD);
+        old.setSymbol("TEST");
+        old.setSettingsJson(settings.toString());
+        old.setResultJson(stored.toString());
+        when(repository.findByIdAndOwnerId(42L, user.getId())).thenReturn(Optional.of(old));
+
+        BacktestDetail detail = strictService.findOne(42L, user);
+
+        assertEquals(0, detail.settings().riskFreeRate(), 0.0, "relu avec 0 %, la valeur utilisee a l'epoque");
+        assertNull(detail.periodsPerYear(), "absent : l'ecran indique 252, la valeur fixe de l'epoque");
+        assertEquals(result.metrics(), detail.metrics());
+    }
+
+    // ===================== Parametres par defaut (administration) =====================
+
+    @Test
+    void missingValuesTakeTheAdminDefaults() {
+        BacktestSettings adminDefaults = new BacktestSettings(5000, 0.002, 0.0005, 0.05, 0.20, 0.5, 0.02);
+        when(defaults.current()).thenReturn(adminDefaults);
+        strategy(StrategyType.BUY_AND_HOLD);
+        when(marketData.series("TEST")).thenReturn(wavy(200));
+
+        BacktestDetail detail = service.run(request(null, null, null, null, null, null), user);
+
+        assertEquals(adminDefaults, detail.settings());
+    }
+
+    @Test
+    void givenValuesWinAndZeroDisablesADefaultStopLossOrTakeProfit() {
+        BacktestSettings adminDefaults = new BacktestSettings(5000, 0.002, 0.0005, 0.05, 0.20, 0.5, 0.02);
+        BacktestSettings s = BacktestService.settings(new BacktestRequest(5L, "TEST", null, null, 8000.0, 0.001, 0.0,
+                0.0, 0.0, 1.0, null, 0.0), adminDefaults);
+        assertEquals(new BacktestSettings(8000, 0.001, 0, null, null, 1, 0.0), s, "0 = aucun stop-loss ni take-profit");
+        // seule la valeur absente prend le defaut
+        BacktestSettings partial = BacktestService.settings(new BacktestRequest(5L, "TEST", null, null, 8000.0, null, null,
+                null, null, null, null, null), adminDefaults);
+        assertEquals(new BacktestSettings(8000, 0.002, 0.0005, 0.05, 0.20, 0.5, 0.02), partial);
+    }
+
+    @Test
+    void theComparisonAlsoUsesTheAdminDefaults() {
+        BacktestSettings adminDefaults = new BacktestSettings(7000, 0.003, 0, null, null, 1, 0.01);
+        when(defaults.current()).thenReturn(adminDefaults);
+        Strategy sma = strategy(5L, "SMA", StrategyType.SMA_CROSS);
+        sma.setParams(smaCross(5, 20));
+        strategy(6L, "RSI", StrategyType.RSI);
+        when(marketData.series("TEST")).thenReturn(wavy(300));
+
+        ComparisonResult r = service.compare(new CompareRequest(List.of(5L, 6L), "TEST", null, null, null, null, null,
+                null, null, null, null), user);
+
+        assertEquals(adminDefaults, r.settings());
+    }
+
+    // ===================== Verification des cours d'un backtest enregistre =====================
+
+    @Test
+    void aBacktestStoresThePeriodHashAndItsCheckSaysSame() {
+        strategy(StrategyType.BUY_AND_HOLD);
+        when(marketData.series("TEST")).thenReturn(wavy(300));
+        service.run(new BacktestRequest(5L, "TEST", START.plusDays(50), START.plusDays(200), null, null, null, null,
+                null, null, null), user);
+        Backtest saved = savedBacktest();
+        assertEquals(Prices.periodHash(Prices.normalized(wavy(300)), START.plusDays(50), START.plusDays(200)),
+                saved.getPeriodHash());
+
+        saved.setId(40L);
+        when(repository.findByIdAndOwnerId(40L, user.getId())).thenReturn(Optional.of(saved));
+        // la serie s'est allongee depuis : la periode est la meme
+        when(marketData.series("TEST")).thenReturn(wavy(400));
+        assertEquals(DataCheck.Status.SAME, service.dataCheck(40L, user).status());
+        // dividende : les cours anterieurs baissent de 2 %
+        when(marketData.series("TEST")).thenReturn(series(400, i -> (100 + 0.2 * i + 5 * Math.sin(i / 4.0)) * (i < 150 ? 0.98 : 1)));
+        assertEquals(DataCheck.Status.CHANGED, service.dataCheck(40L, user).status());
+        // source injoignable : le detail reste lisible, la verification dit seulement « indisponible »
+        when(marketData.series("TEST")).thenThrow(new IllegalArgumentException("source injoignable"));
+        assertEquals(DataCheck.Status.UNAVAILABLE, service.dataCheck(40L, user).status());
+    }
+
+    @Test
+    void anOldBacktestIsUnverifiableWithoutLoadingPrices() {
+        Strategy strategy = strategy(StrategyType.BUY_AND_HOLD);
+        Backtest old = backtest(41L, strategy, 1.0, null, -0.1, 0);
+        old.setSymbol("TEST");
+        old.setFromDate(START);
+        old.setToDate(START.plusDays(100));
+        when(repository.findByIdAndOwnerId(41L, user.getId())).thenReturn(Optional.of(old));
+
+        assertEquals(DataCheck.Status.UNVERIFIABLE, service.dataCheck(41L, user).status());
+        verify(marketData, never()).series(anyString());
+        assertThrows(NotFoundException.class, () -> service.dataCheck(99L, user));
     }
 
     private Backtest backtest(Long id, Strategy strategy, Double sharpe, Double winRate, Double maxDrawdown,

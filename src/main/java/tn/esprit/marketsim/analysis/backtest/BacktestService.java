@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.agent.realdata.MarketDataService;
 import tn.esprit.marketsim.agent.realdata.PriceSeries;
+import tn.esprit.marketsim.analysis.Prices;
 import tn.esprit.marketsim.analysis.Strategy;
 import tn.esprit.marketsim.analysis.StrategyParams;
 import tn.esprit.marketsim.analysis.StrategyRules;
@@ -22,6 +23,7 @@ import tn.esprit.marketsim.analysis.backtest.BacktestDtos.CompareRequest;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonCurve;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.ComparisonResult;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.Curves;
+import tn.esprit.marketsim.analysis.backtest.BacktestDtos.DataCheckResult;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.Segment;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StrategyComparison;
 import tn.esprit.marketsim.analysis.backtest.BacktestDtos.StoredSettings;
@@ -61,6 +63,8 @@ public class BacktestService {
     private final StrategyService strategies;
     private final MarketDataService marketData;
     private final JsonMapper json;
+    /** parametres par defaut des simulations (modifiables par l'administrateur) */
+    private final SimulationDefaultsService defaults;
 
     // ===================== Lancer =====================
 
@@ -78,8 +82,8 @@ public class BacktestService {
                     + "(croisement de moyennes, RSI, MACD, Bollinger, buy & hold) avant de lancer un backtest");
         }
         StrategyParams params = StrategyRules.normalize(strategy.getType(), strategy.getParams());
-        BacktestSettings settings = settings(req);                        // valide avant de telecharger
-        PriceSeries series = marketData.series(req.symbol());             // 404 si l'actif est inconnu
+        BacktestSettings settings = settings(req, defaults.current());    // valide avant de telecharger
+        PriceSeries series = prices(req.symbol());                        // 404 si l'actif est inconnu
 
         BacktestResult result = simulate(series, strategy.getType(), params, settings,
                 req.from(), req.to(), req.splitDate());
@@ -105,6 +109,7 @@ public class BacktestService {
         b.setExcessReturn(m.excessReturn());
         b.setDataSource(series.source());
         b.setDataHash(series.hash());
+        b.setPeriodHash(Prices.periodHash(series, dates[0], dates[dates.length - 1]));
         b.setSettingsJson(json.writeValueAsString(new StoredSettings(params, settings)));
         b.setResultJson(json.writeValueAsString(result));
         repository.save(b);
@@ -134,7 +139,7 @@ public class BacktestService {
         Long firstId = req.strategyIds().get(0);
         BacktestSettings settings = settings(new BacktestRequest(firstId, req.symbol(), req.from(), req.to(),
                 req.initialCapital(), req.feeRate(), req.slippage(), req.stopLoss(), req.takeProfit(),
-                req.positionFraction(), req.splitDate()));
+                req.positionFraction(), req.splitDate(), req.riskFreeRate()), defaults.current());
 
         List<Strategy> selected = new ArrayList<>(req.strategyIds().size());
         List<StrategyParams> params = new ArrayList<>(req.strategyIds().size());
@@ -148,9 +153,10 @@ public class BacktestService {
             params.add(StrategyRules.normalize(strategy.getType(), strategy.getParams()));
         }
 
-        PriceSeries series = marketData.series(req.symbol());   // charge une seule fois pour toutes les strategies
+        PriceSeries series = prices(req.symbol());   // charge une seule fois pour toutes les strategies
         List<StrategyComparison> results = new ArrayList<>(selected.size());
         Curves referenceCurves = null;
+        Integer periodsPerYear = null;
         for (int i = 0; i < selected.size(); i++) {
             Strategy strategy = selected.get(i);
             BacktestResult result;
@@ -162,16 +168,53 @@ public class BacktestService {
                 throw new IllegalArgumentException("« " + strategy.getName() + " » — " + e.getMessage(), e);
             }
             Curves curves = result.curves();
-            // meme serie et meme periode : toutes les strategies ont les memes dates et le meme buy & hold
-            if (referenceCurves == null) referenceCurves = curves;
+            // meme serie et meme periode : toutes les strategies ont les memes dates, le meme buy & hold
+            // et le meme nombre de seances par an
+            if (referenceCurves == null) {
+                referenceCurves = curves;
+                periodsPerYear = result.periodsPerYear();
+            }
             results.add(new StrategyComparison(strategy.getId(), strategy.getName(), strategy.getType(),
                     params.get(i), result.metrics(), result.train(), result.test(),
                     new ComparisonCurve(curves.equity(), curves.drawdown())));
         }
 
         LocalDate[] dates = referenceCurves.dates();
-        return new ComparisonResult(series.symbol(), dates[0], dates[dates.length - 1], req.splitDate(),
-                series.source(), series.hash(), settings, dates, referenceCurves.buyHold(), results);
+        LocalDate from = dates[0];
+        LocalDate to = dates[dates.length - 1];
+        return new ComparisonResult(series.symbol(), from, to, req.splitDate(), series.source(), series.hash(),
+                settings, dates, referenceCurves.buyHold(), results, periodsPerYear,
+                Prices.periodHash(series, from, to));
+    }
+
+    /**
+     * Historique de l'actif (module 6), clotures arrondies a 6 decimales : le resultat est le meme que les cours
+     * viennent d'un telechargement ou du cache ({@link Prices#normalized}).
+     */
+    PriceSeries prices(String symbol) {
+        return Prices.normalized(marketData.series(symbol));
+    }
+
+    /**
+     * Les cours de la periode d'un backtest enregistre sont-ils encore les memes ? (voir {@link DataCheck}).
+     * Les cours actuels sont charges ici, a part de la lecture du detail : si la source ne repond pas, le detail
+     * reste lisible et la verification dit seulement « indisponible ».
+     */
+    @Transactional(readOnly = true)
+    public DataCheckResult dataCheck(Long id, User user) {
+        Backtest b = mine(id, user);
+        PriceSeries current = currentPrices(b.getSymbol(), b.getPeriodHash());
+        return DataCheck.check(b.getPeriodHash(), b.getFromDate(), b.getToDate(), current);
+    }
+
+    /** Cours actuels pour une verification ; null s'ils ne peuvent pas etre charges (ou si rien n'est a verifier). */
+    public PriceSeries currentPrices(String symbol, String savedPeriodHash) {
+        if (savedPeriodHash == null) return null;   // ancien enregistrement : inutile de telecharger
+        try {
+            return prices(symbol);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**
@@ -193,6 +236,10 @@ public class BacktestService {
             throw new IllegalArgumentException("Aucune donnée pour " + series.symbol() + " sur la période demandée");
         }
 
+        // seances par an estimees sur tout l'historique de l'actif (son calendrier de cotation) : ~252 ou ~365
+        int perYear = PerformanceMetrics.periodsPerYear(dates);
+        double riskFree = settings.riskFreeRate();
+
         Run run = runOn(series, type, params, settings, lo, hi, "Période");
         Segment train = null;
         Segment test = null;
@@ -203,14 +250,15 @@ public class BacktestService {
             }
             int k = lo;                                  // premiere seance de la periode de test
             while (dates[k].isBefore(split)) k++;
-            train = segment(runOn(series, type, params, settings, lo, k - 1, "Période d'entraînement"));
-            test = segment(runOn(series, type, params, settings, k, hi, "Période de test"));
+            train = segment(runOn(series, type, params, settings, lo, k - 1, "Période d'entraînement"), perYear, riskFree);
+            test = segment(runOn(series, type, params, settings, k, hi, "Période de test"), perYear, riskFree);
         }
 
         Curves curves = new Curves(run.dates(), Rounding.round(run.equity(), 2), Rounding.round(run.buyHold(), 2),
                 Rounding.round(PerformanceMetrics.drawdownCurve(run.equity()), 6));
         List<Trade> trades = run.trades().stream().map(Trade::rounded).toList();
-        return new BacktestResult(PerformanceMetrics.compute(run).rounded(), train, test, curves, trades);
+        return new BacktestResult(PerformanceMetrics.compute(run, perYear, riskFree).rounded(), train, test, curves,
+                trades, perYear);
     }
 
     /** Verifie que la fenetre [lo, hi] est exploitable, calcule les signaux et lance le moteur. */
@@ -235,18 +283,29 @@ public class BacktestService {
         return BacktestEngine.run(dates, series.closes(), signals, lo, hi, settings);
     }
 
-    private static Segment segment(Run run) {
+    private static Segment segment(Run run, int periodsPerYear, double riskFreeRate) {
         LocalDate[] d = run.dates();
-        return new Segment(d[0], d[d.length - 1], PerformanceMetrics.compute(run).rounded());
+        return new Segment(d[0], d[d.length - 1], PerformanceMetrics.compute(run, periodsPerYear, riskFreeRate).rounded());
     }
 
-    /** Reglages du backtest : valeurs par defaut puis controle des bornes. */
+    /** Reglages du backtest avec les valeurs par defaut d'origine ({@link BacktestSettings#BUILT_IN}). */
     static BacktestSettings settings(BacktestRequest req) {
-        double capital = req.initialCapital() == null ? BacktestSettings.DEFAULT_CAPITAL : req.initialCapital();
-        double fee = req.feeRate() == null ? BacktestSettings.DEFAULT_FEE_RATE : req.feeRate();
-        double slippage = req.slippage() == null ? BacktestSettings.DEFAULT_SLIPPAGE : req.slippage();
-        double fraction = req.positionFraction() == null
-                ? BacktestSettings.DEFAULT_POSITION_FRACTION : req.positionFraction();
+        return settings(req, BacktestSettings.BUILT_IN);
+    }
+
+    /**
+     * Reglages du backtest : une valeur absente prend celle des parametres par defaut ({@code defaults}), puis
+     * controle des bornes. Pour le stop-loss et le take-profit, 0 veut dire « aucun » : c'est ainsi qu'on en
+     * desactive un que les parametres par defaut activent. Public : la meme regle valide les parametres par
+     * defaut eux-memes ({@link SimulationDefaultsService}).
+     */
+    public static BacktestSettings settings(BacktestRequest req, BacktestSettings defaults) {
+        double capital = req.initialCapital() == null ? defaults.initialCapital() : req.initialCapital();
+        double fee = req.feeRate() == null ? defaults.feeRate() : req.feeRate();
+        double slippage = req.slippage() == null ? defaults.slippage() : req.slippage();
+        double fraction = req.positionFraction() == null ? defaults.positionFraction() : req.positionFraction();
+        Double stopLoss = optionalRate(req.stopLoss(), defaults.stopLoss());
+        Double takeProfit = optionalRate(req.takeProfit(), defaults.takeProfit());
         // ecriture en "!(...)" pour refuser aussi NaN
         if (!(capital > 0 && capital <= 1e12)) {
             throw new IllegalArgumentException("initialCapital : le capital initial doit être strictement positif");
@@ -257,17 +316,28 @@ public class BacktestService {
         if (!(slippage >= 0 && slippage <= 0.05)) {
             throw new IllegalArgumentException("slippage : le glissement doit être entre 0 et 0.05 (5 %)");
         }
-        if (req.stopLoss() != null && !(req.stopLoss() > 0 && req.stopLoss() < 1)) {
-            throw new IllegalArgumentException("stopLoss : le stop-loss doit être entre 0 et 1 (0.05 = 5 %)");
+        if (stopLoss != null && !(stopLoss > 0 && stopLoss < 1)) {
+            throw new IllegalArgumentException("stopLoss : le stop-loss doit être entre 0 et 1 (0.05 = 5 % ; 0 = aucun)");
         }
-        if (req.takeProfit() != null && !(req.takeProfit() > 0 && req.takeProfit() <= 10)) {
-            throw new IllegalArgumentException("takeProfit : le take-profit doit être entre 0 et 10 (0.10 = 10 %)");
+        if (takeProfit != null && !(takeProfit > 0 && takeProfit <= 10)) {
+            throw new IllegalArgumentException("takeProfit : le take-profit doit être entre 0 et 10 (0.10 = 10 % ; 0 = aucun)");
         }
         if (!(fraction > 0 && fraction <= 1)) {
             throw new IllegalArgumentException(
                     "positionFraction : la part du capital engagée doit être supérieure à 0 et au plus 1 (1 = 100 %)");
         }
-        return new BacktestSettings(capital, fee, slippage, req.stopLoss(), req.takeProfit(), fraction);
+        double riskFree = req.riskFreeRate() == null ? defaults.riskFreeRate() : req.riskFreeRate();
+        if (!(riskFree >= 0 && riskFree <= BacktestSettings.MAX_RISK_FREE_RATE)) {
+            throw new IllegalArgumentException(
+                    "riskFreeRate : le taux sans risque doit être entre 0 et 0.20 (20 % par an) ; 0.02 = 2 %");
+        }
+        return new BacktestSettings(capital, fee, slippage, stopLoss, takeProfit, fraction, riskFree);
+    }
+
+    /** Stop-loss ou take-profit : absent = valeur par defaut ; 0 = aucun (null). */
+    private static Double optionalRate(Double requested, Double defaultValue) {
+        Double value = requested == null ? defaultValue : requested;
+        return value != null && value == 0 ? null : value;
     }
 
     // ===================== Lire =====================
@@ -292,7 +362,31 @@ public class BacktestService {
     /** Supprime un backtest, puis remet le resume de la strategie sur son backtest restant le plus recent. */
     @Transactional
     public void delete(Long id, User user) {
-        Backtest b = mine(id, user);
+        remove(mine(id, user));
+    }
+
+    // ===================== Administration (routes reservees a l'ADMIN) =====================
+
+    /** Un backtest de n'importe quel utilisateur, en lecture seule (meme format que pour son proprietaire). */
+    @Transactional(readOnly = true)
+    public BacktestDetail findAny(Long id) {
+        Backtest b = any(id);
+        StoredSettings stored = json.readValue(b.getSettingsJson(), StoredSettings.class);
+        BacktestResult result = json.readValue(b.getResultJson(), BacktestResult.class);
+        return detail(b, stored.params(), stored.settings(), result);
+    }
+
+    /** Supprime le backtest de n'importe quel utilisateur ; le resume de sa strategie est remis a jour. */
+    @Transactional
+    public void deleteAny(Long id) {
+        remove(any(id));
+    }
+
+    private Backtest any(Long id) {
+        return repository.findById(id).orElseThrow(() -> new NotFoundException("Backtest introuvable"));
+    }
+
+    private void remove(Backtest b) {
         Strategy strategy = b.getStrategy();
         repository.delete(b);
         Backtest latest = repository.findFirstByStrategyIdOrderByCreatedAtDescIdDesc(strategy.getId()).orElse(null);
@@ -327,6 +421,7 @@ public class BacktestService {
                                          BacktestResult r) {
         return new BacktestDetail(b.getId(), b.getStrategy().getId(), b.getStrategyName(), b.getStrategyType(),
                 params, b.getSymbol(), b.getFromDate(), b.getToDate(), b.getSplitDate(), b.getCreatedAt(),
-                b.getDataSource(), b.getDataHash(), settings, r.metrics(), r.train(), r.test(), r.curves(), r.trades());
+                b.getDataSource(), b.getDataHash(), settings, r.metrics(), r.train(), r.test(), r.curves(), r.trades(),
+                r.periodsPerYear());
     }
 }

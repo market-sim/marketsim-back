@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import lombok.RequiredArgsConstructor;
 import tn.esprit.marketsim.agent.realdata.MarketDataService;
 import tn.esprit.marketsim.agent.realdata.PriceSeries;
+import tn.esprit.marketsim.analysis.Prices;
 import tn.esprit.marketsim.analysis.indicator.IndicatorDtos.BollingerSeries;
 import tn.esprit.marketsim.analysis.indicator.IndicatorDtos.IndicatorResponse;
 import tn.esprit.marketsim.analysis.indicator.IndicatorDtos.MacdSeries;
@@ -40,7 +41,8 @@ public class IndicatorService {
 
     public IndicatorResponse indicators(String symbol, String sma, String ema, String rsi, String macd,
                                         String bollinger, LocalDate from, LocalDate to) {
-        return compute(marketData.series(symbol), sma, ema, rsi, macd, bollinger, from, to);
+        // clotures a 6 decimales : memes indicateurs que les cours viennent d'un telechargement ou du cache
+        return compute(Prices.normalized(marketData.series(symbol)), sma, ema, rsi, macd, bollinger, from, to);
     }
 
     /**

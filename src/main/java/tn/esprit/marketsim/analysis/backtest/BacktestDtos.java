@@ -29,16 +29,35 @@ public final class BacktestDtos {
      * @param takeProfit       ex. 0.10 pour 10 % (defaut : aucun)
      * @param positionFraction part du capital engagee par position, defaut 1
      * @param splitDate        date de coupure entrainement / test (defaut : aucune)
+     * @param riskFreeRate     taux sans risque annuel pour Sharpe et Sortino, ex. 0.02 pour 2 % (defaut : 0)
      */
     public record BacktestRequest(Long strategyId, String symbol, LocalDate from, LocalDate to,
                                   Double initialCapital, Double feeRate, Double slippage, Double stopLoss,
-                                  Double takeProfit, Double positionFraction, LocalDate splitDate) {
+                                  Double takeProfit, Double positionFraction, LocalDate splitDate,
+                                  Double riskFreeRate) {
+
+        /** Demande sans taux sans risque (valeur par defaut). */
+        public BacktestRequest(Long strategyId, String symbol, LocalDate from, LocalDate to, Double initialCapital,
+                               Double feeRate, Double slippage, Double stopLoss, Double takeProfit,
+                               Double positionFraction, LocalDate splitDate) {
+            this(strategyId, symbol, from, to, initialCapital, feeRate, slippage, stopLoss, takeProfit,
+                    positionFraction, splitDate, null);
+        }
     }
 
     /** Demande de comparaison : les reglages de simulation sont communs a toutes les strategies. */
     public record CompareRequest(List<Long> strategyIds, String symbol, LocalDate from, LocalDate to,
                                  Double initialCapital, Double feeRate, Double slippage, Double stopLoss,
-                                 Double takeProfit, Double positionFraction, LocalDate splitDate) {
+                                 Double takeProfit, Double positionFraction, LocalDate splitDate,
+                                 Double riskFreeRate) {
+
+        /** Demande sans taux sans risque (valeur par defaut). */
+        public CompareRequest(List<Long> strategyIds, String symbol, LocalDate from, LocalDate to,
+                              Double initialCapital, Double feeRate, Double slippage, Double stopLoss,
+                              Double takeProfit, Double positionFraction, LocalDate splitDate) {
+            this(strategyIds, symbol, from, to, initialCapital, feeRate, slippage, stopLoss, takeProfit,
+                    positionFraction, splitDate, null);
+        }
     }
 
     /** Courbes journalieres : les quatre tableaux ont la meme taille. */
@@ -59,18 +78,36 @@ public final class BacktestDtos {
                                     ComparisonCurve curves) {
     }
 
-    /** Resultat complet d'une comparaison, renvoye sans persistance. */
+    /**
+     * Resultat complet d'une comparaison (enregistre tel quel par l'historique des comparaisons).
+     *
+     * @param periodsPerYear seances par an utilisees pour annualiser (absent des comparaisons enregistrees avant
+     *                       le 2026-11-19, calculees avec 252)
+     * @param periodHash     empreinte des seances de la periode comparee seulement ({@code Prices.periodHash}),
+     *                       absente des anciens enregistrements
+     */
     public record ComparisonResult(String symbol, LocalDate from, LocalDate to, LocalDate splitDate,
                                    String dataSource, String dataHash, BacktestSettings settings,
-                                   LocalDate[] dates, double[] buyHold, List<StrategyComparison> strategies) {
+                                   LocalDate[] dates, double[] buyHold, List<StrategyComparison> strategies,
+                                   Integer periodsPerYear, String periodHash) {
     }
 
     /** Metriques d'une sous-periode (entrainement ou test), simulee a part depuis le capital initial. */
     public record Segment(LocalDate from, LocalDate to, Metrics metrics) {
     }
 
-    /** Resultat complet d'un backtest (enregistre en JSON dans {@link Backtest}). */
-    public record BacktestResult(Metrics metrics, Segment train, Segment test, Curves curves, List<Trade> trades) {
+    /**
+     * Resultat complet d'un backtest (enregistre en JSON dans {@link Backtest}).
+     *
+     * @param periodsPerYear seances par an utilisees pour annualiser (absent des anciens backtests : 252)
+     */
+    public record BacktestResult(Metrics metrics, Segment train, Segment test, Curves curves, List<Trade> trades,
+                                 Integer periodsPerYear) {
+    }
+
+    /** Resultat de la verification des cours d'un enregistrement (voir {@link DataCheck}). */
+    public record DataCheckResult(DataCheck.Status status, LocalDate from, LocalDate to, LocalDate currentFirst,
+                                  LocalDate currentLast) {
     }
 
     /** Parametres de la strategie et reglages au moment du lancement (enregistres en JSON). */
@@ -83,12 +120,13 @@ public final class BacktestDtos {
      * @param params     parametres de la strategie au moment du lancement (elle a pu etre modifiee depuis)
      * @param dataSource origine de l'historique (YAHOO ou CSV)
      * @param dataHash   empreinte SHA-256 de l'historique utilise (reproductibilite)
+     * @param periodsPerYear seances par an utilisees pour annualiser (absent des anciens backtests : 252)
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record BacktestDetail(Long id, Long strategyId, String strategyName, StrategyType strategyType,
                                  StrategyParams params, String symbol, LocalDate from, LocalDate to,
                                  LocalDate splitDate, LocalDateTime createdAt, String dataSource, String dataHash,
                                  BacktestSettings settings, Metrics metrics, Segment train, Segment test,
-                                 Curves curves, List<Trade> trades) {
+                                 Curves curves, List<Trade> trades, Integer periodsPerYear) {
     }
 }
